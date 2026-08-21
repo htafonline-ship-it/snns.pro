@@ -7,6 +7,13 @@ export interface DailyRoomResponse {
   roomUrl?: string;
 }
 
+export interface DailyTokenResponse {
+  token: string;
+  roomName: string;
+  userId: string;
+  TOKEN_CREATED: boolean;
+}
+
 class DailyService {
   private callFrame: DailyCall | null = null;
   private currentRoomUrl: string | null = null;
@@ -54,15 +61,51 @@ class DailyService {
   }
 
   /**
+   * Request backend to generate a distinct Daily Meeting Token for a specific user and room
+   */
+  async getMeetingToken(
+    roomName: string,
+    userId: string,
+    userName: string,
+    isOwner: boolean = false
+  ): Promise<string> {
+    console.log(`[DAILY_TOKEN] Requesting token for user=${userId} in room=${roomName}`);
+    try {
+      const res = await fetch('/api/daily/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomName, userId, userName, isOwner }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.error('[DAILY_TOKEN_ERROR] Token creation failed:', data);
+        throw new Error(data.error || `فشل في إنشاء رمز الدخول (Token) للغرفة`);
+      }
+
+      const data: DailyTokenResponse = await res.json();
+      console.log(`[DAILY_TOKEN] TOKEN_CREATED = true`, {
+        roomName: data.roomName,
+        userId: data.userId,
+      });
+      return data.token;
+    } catch (err) {
+      console.error('[DAILY_TOKEN_ERROR] Exception:', err);
+      throw err;
+    }
+  }
+
+  /**
    * Embed and join Daily Prebuilt Call within a container element
    */
   async joinPrebuilt(
     container: HTMLElement,
     roomUrl: string,
     userName: string,
-    callType: 'video' | 'audio'
+    callType: 'video' | 'audio',
+    token?: string
   ): Promise<DailyCall> {
-    console.log('[DAILY] JOIN_START', { roomUrl, userName, callType });
+    console.log('[DAILY] JOIN_START', { roomUrl, userName, callType, hasToken: Boolean(token) });
 
     // Clean up any existing call frame
     await this.leave();
@@ -98,9 +141,22 @@ class DailyService {
     this.callFrame = frame;
     this.currentRoomUrl = roomUrl;
 
+    const logParticipants = (context: string) => {
+      try {
+        const p = frame.participants();
+        const pKeys = Object.keys(p || {});
+        const count = pKeys.length;
+        const hasRemote = pKeys.some((k) => k !== 'local');
+        console.log(`[DAILY] ${context} | PARTICIPANT_COUNT = ${count} | REMOTE_PARTICIPANT = ${hasRemote}`);
+      } catch {
+        // ignore
+      }
+    };
+
     frame.on('joined-meeting', () => {
       console.log('[DAILY] JOIN_SUCCESS = true');
       console.log('[DAILY] JOINED_MEETING = true');
+      logParticipants('JOINED_MEETING');
       if (this.onJoined) this.onJoined();
     });
 
@@ -111,11 +167,13 @@ class DailyService {
 
     frame.on('participant-joined', (e) => {
       console.log('[DAILY] PARTICIPANT_JOINED = true', e);
+      logParticipants('PARTICIPANT_JOINED');
       if (this.onParticipantJoined) this.onParticipantJoined(e);
     });
 
     frame.on('participant-left', (e) => {
       console.log('[DAILY] PARTICIPANT_LEFT = true', e);
+      logParticipants('PARTICIPANT_LEFT');
       if (this.onParticipantLeft) this.onParticipantLeft(e);
     });
 
@@ -124,12 +182,18 @@ class DailyService {
       if (this.onError) this.onError(e);
     });
 
-    await frame.join({
+    const joinOptions: any = {
       url: roomUrl,
       userName: userName,
       videoSource: callType === 'video',
       audioSource: true,
-    });
+    };
+
+    if (token) {
+      joinOptions.token = token;
+    }
+
+    await frame.join(joinOptions);
 
     return frame;
   }

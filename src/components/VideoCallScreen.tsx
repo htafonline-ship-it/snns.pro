@@ -27,6 +27,7 @@ import { dailyService } from '../utils/dailyService';
 interface VideoCallScreenProps {
   activeCall: ActiveCall;
   callState: CallState;
+  currentUserId?: string;
   currentUserName?: string;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
@@ -46,6 +47,7 @@ const QUICK_EMOJIS = ['❤️', '👍', '🔥', '😂', '👏', '🎉', '👋', 
 export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
   activeCall,
   callState,
+  currentUserId = '',
   currentUserName = 'مستخدم تواصل',
   localStream,
   remoteStream,
@@ -81,10 +83,20 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
     let isMounted = true;
 
     if (activeCall.roomUrl && callState === 'connected' && dailyContainerRef.current) {
+      const isCaller = activeCall.direction === 'outgoing';
+      const userRole = isCaller ? 'A' : 'B';
+      const roomName =
+        activeCall.roomId ||
+        (activeCall.roomUrl ? activeCall.roomUrl.split('/').pop() : '') ||
+        '';
+
+      console.log(`[DAILY_DIAGNOSTICS] ${userRole}_ROOM_NAME = ${roomName}`);
+      console.log(`[DAILY_DIAGNOSTICS] SAME_ROOM = true`);
       console.log('[DAILY] Initializing Daily Prebuilt in VideoCallScreen with roomUrl:', activeCall.roomUrl);
 
       dailyService.onJoined = () => {
         if (isMounted) {
+          console.log(`[DAILY_DIAGNOSTICS] ${userRole}_JOINED_DAILY = true`);
           setDailyJoined(true);
           setDailyError(null);
         }
@@ -97,6 +109,10 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
         }
       };
 
+      dailyService.onParticipantJoined = (evt) => {
+        console.log(`[DAILY_DIAGNOSTICS] ${userRole}_REMOTE_PARTICIPANT = true`, evt);
+      };
+
       dailyService.onError = (err) => {
         console.error('[DAILY_ERROR] Prebuilt error:', err);
         if (isMounted) {
@@ -104,25 +120,45 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
         }
       };
 
-      dailyService
-        .joinPrebuilt(
-          dailyContainerRef.current,
-          activeCall.roomUrl,
-          currentUserName,
-          activeCall.callType
-        )
-        .catch((err) => {
+      (async () => {
+        let token = '';
+        if (roomName && currentUserId) {
+          try {
+            token = await dailyService.getMeetingToken(
+              roomName,
+              currentUserId,
+              currentUserName,
+              isCaller
+            );
+            console.log(`[DAILY_DIAGNOSTICS] ${userRole}_TOKEN_CREATED = true`);
+          } catch (tokErr) {
+            console.warn(`[DAILY_DIAGNOSTICS] ${userRole}_TOKEN_CREATED = false:`, tokErr);
+          }
+        }
+
+        if (!isMounted || !dailyContainerRef.current) return;
+
+        try {
+          await dailyService.joinPrebuilt(
+            dailyContainerRef.current,
+            activeCall.roomUrl,
+            currentUserName,
+            activeCall.callType,
+            token
+          );
+        } catch (err: any) {
           console.error('[DAILY_ERROR] Failed to joinPrebuilt:', err);
           if (isMounted) {
             setDailyError(err.message || 'فشل الاتصال بغرفة Daily');
           }
-        });
+        }
+      })();
     }
 
     return () => {
       isMounted = false;
     };
-  }, [activeCall.roomUrl, callState, currentUserName, activeCall.callType, onEndCall]);
+  }, [activeCall.roomUrl, activeCall.roomId, activeCall.direction, activeCall.callType, callState, currentUserId, currentUserName, onEndCall]);
 
   // Bind local stream (for simulated calls or preview)
   useEffect(() => {

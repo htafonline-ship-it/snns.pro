@@ -956,6 +956,7 @@ export function App() {
         <VideoCallScreen
           activeCall={activeCall}
           callState={callState}
+          currentUserId={currentUser.uid}
           currentUserName={currentUser.name}
           localStream={localStream}
           remoteStream={remoteStream}

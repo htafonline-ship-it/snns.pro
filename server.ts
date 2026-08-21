@@ -280,6 +280,80 @@ async function startServer() {
   });
 
   /**
+   * Daily.co Meeting Token Endpoint
+   * Generates a secure, distinct Meeting Token for authenticated Firebase users for a specific Daily Room
+   */
+  app.post('/api/daily/token', async (req, res) => {
+    const apiKey = (process.env.DAILY_API_KEY || '').trim();
+    const isKeyPresent = Boolean(apiKey);
+
+    if (!isKeyPresent) {
+      console.log('DAILY_TOKEN_CREATED = false');
+      return res.status(400).json({
+        error: 'DAILY_API_KEY is not configured on server',
+        TOKEN_CREATED: false,
+      });
+    }
+
+    try {
+      const { roomName, userId, userName, isOwner } = req.body;
+
+      if (!roomName || !userId) {
+        return res.status(400).json({
+          error: 'roomName and userId are required to generate meeting token',
+          TOKEN_CREATED: false,
+        });
+      }
+
+      console.log(`[DAILY_TOKEN] Request token: roomName=${roomName}, userId=${userId}, isOwner=${Boolean(isOwner)}`);
+
+      const tokenRes = await fetch('https://api.daily.co/v1/meeting-tokens', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          properties: {
+            room_name: roomName,
+            user_name: userName || 'مستخدم تواصل',
+            user_id: userId,
+            is_owner: Boolean(isOwner),
+            exp: Math.floor(Date.now() / 1000) + 7200, // 2 hours
+            enable_screenshare: true,
+            start_audio_off: false,
+          },
+        }),
+      });
+
+      const data: any = await tokenRes.json();
+
+      if (!tokenRes.ok) {
+        console.error(`[DAILY_TOKEN] Error ${tokenRes.status}:`, data);
+        return res.status(tokenRes.status).json({
+          error: data.error || data.info || 'فشل في إنشاء Meeting Token',
+          TOKEN_CREATED: false,
+          details: data,
+        });
+      }
+
+      console.log(`[DAILY_TOKEN] TOKEN_CREATED = true for user=${userId} in room=${roomName}`);
+      return res.json({
+        token: data.token,
+        roomName,
+        userId,
+        TOKEN_CREATED: true,
+      });
+    } catch (err: any) {
+      console.error('[DAILY_TOKEN] Exception:', err);
+      return res.status(500).json({
+        error: err.message || 'خطأ أثناء إنشاء Daily Meeting Token',
+        TOKEN_CREATED: false,
+      });
+    }
+  });
+
+  /**
    * Daily.co status/config endpoint
    */
   app.get('/api/daily/config', (req, res) => {
