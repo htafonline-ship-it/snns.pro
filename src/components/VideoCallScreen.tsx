@@ -1,27 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ActiveCall, CallState, ChatMessage, FloatingReaction } from '../types';
 import {
-  Mic,
-  MicOff,
-  Video as VideoIcon,
-  VideoOff,
   PhoneOff,
-  SwitchCamera,
-  Share2,
-  MessageSquare,
-  Sparkles,
-  Maximize2,
-  Minimize2,
-  Volume2,
-  VolumeX,
-  Send,
-  X,
-  Smile,
+  Loader2,
+  AlertTriangle,
+  Video,
+  Mic,
   ShieldCheck,
-  PhoneCall,
-  Wifi,
 } from 'lucide-react';
-import { playMessageTone } from '../utils/audioTones';
 import { dailyService } from '../utils/dailyService';
 
 interface VideoCallScreenProps {
@@ -29,6 +15,8 @@ interface VideoCallScreenProps {
   callState: CallState;
   currentUserId?: string;
   currentUserName?: string;
+
+  // نبقي هذه الخصائص للتوافق مع App.tsx الحالي
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
   onEndCall: () => void;
@@ -42,225 +30,174 @@ interface VideoCallScreenProps {
   onTriggerReaction: (emoji: string) => void;
 }
 
-const QUICK_EMOJIS = ['❤️', '👍', '🔥', '😂', '👏', '🎉', '👋', '😍'];
-
 export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
   activeCall,
   callState,
   currentUserId = '',
-  currentUserName = 'مستخدم تواصل',
-  localStream,
-  remoteStream,
+  currentUserName = 'مستخدم SNNS',
   onEndCall,
-  onToggleAudio,
-  onToggleVideo,
-  onFlipCamera,
-  onShareScreen,
-  onSendMessage,
-  chatMessages,
-  floatingReactions,
-  onTriggerReaction,
 }) => {
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const dailyContainerRef = useRef<HTMLDivElement>(null);
+  const [meetingToken, setMeetingToken] = useState('');
+  const [loadingToken, setLoadingToken] = useState(false);
+  const [error, setError] = useState('');
+  const [seconds, setSeconds] = useState(0);
 
-  const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
-  const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showChat, setShowChat] = useState(false);
-  const [chatInput, setChatInput] = useState('');
-  const [duration, setDuration] = useState(0);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [dailyJoined, setDailyJoined] = useState(false);
-  const [dailyError, setDailyError] = useState<string | null>(null);
+  const roomName = useMemo(() => {
+    if (activeCall.roomId) {
+      return activeCall.roomId;
+    }
 
-  const chatScrollRef = useRef<HTMLDivElement>(null);
+    if (activeCall.roomUrl) {
+      return activeCall.roomUrl.split('/').filter(Boolean).pop() || '';
+    }
 
-  // Bind Daily Prebuilt when connected with roomUrl
+    return '';
+  }, [activeCall.roomId, activeCall.roomUrl]);
+
+  const isConnected = callState === 'connected';
+
+  /*
+   * جلب Meeting Token فقط بعد قبول المكالمة.
+   * لا ننشئ غرفة جديدة هنا.
+   */
   useEffect(() => {
-    let isMounted = true;
+    let cancelled = false;
 
-    if (activeCall.roomUrl && callState === 'connected' && dailyContainerRef.current) {
-      const isCaller = activeCall.direction === 'outgoing';
-      const userRole = isCaller ? 'A' : 'B';
-      const roomName =
-        activeCall.roomId ||
-        (activeCall.roomUrl ? activeCall.roomUrl.split('/').pop() : '') ||
-        '';
+    const prepareDaily = async () => {
+      if (!isConnected) {
+        return;
+      }
 
-      console.log(`[DAILY_CALL] Role=${userRole}, RoomName=${roomName}, RoomUrl=${activeCall.roomUrl}`);
+      if (!activeCall.roomUrl) {
+        setError('رابط غرفة الاتصال غير موجود');
+        return;
+      }
 
-      dailyService.onJoined = () => {
-        if (isMounted) {
-          console.log(`[DAILY_CALL] ${userRole}_JOINED_DAILY = true`);
-          setDailyJoined(true);
-          setDailyError(null);
-        }
-      };
+      if (!roomName) {
+        setError('اسم غرفة الاتصال غير موجود');
+        return;
+      }
 
-      dailyService.onLeft = () => {
-        console.log('[DAILY] Prebuilt left-meeting triggered -> onEndCall');
-        if (isMounted) {
-          onEndCall();
-        }
-      };
+      if (!currentUserId) {
+        setError('تعذر تحديد هوية المستخدم');
+        return;
+      }
 
-      dailyService.onParticipantJoined = (evt) => {
-        console.log(`[DAILY_CALL] ${userRole}_REMOTE_PARTICIPANT_EVENT:`, evt);
-      };
+      setLoadingToken(true);
+      setError('');
 
-      dailyService.onError = (err) => {
-        console.error('[DAILY_ERROR] Prebuilt error:', err);
-        if (isMounted) {
-          setDailyError(typeof err === 'string' ? err : 'حدث خطأ أثناء الاتصال بغرفة Daily');
-        }
-      };
+      try {
+        console.log('[DAILY_SIMPLE] PREPARE_START');
+        console.log('[DAILY_SIMPLE] CURRENT_UID =', currentUserId);
+        console.log('[DAILY_SIMPLE] ROOM_NAME =', roomName);
+        console.log('[DAILY_SIMPLE] ROOM_URL =', activeCall.roomUrl);
 
-      (async () => {
-        if (!roomName) {
-          if (isMounted) setDailyError('اسم الغرفة غير محدد');
-          return;
-        }
+        const token = await dailyService.getMeetingToken(
+          roomName,
+          currentUserName,
+          activeCall.direction === 'outgoing',
+          currentUserId
+        );
 
-        let token = '';
-        try {
-          token = await dailyService.getMeetingToken(
-            roomName,
-            currentUserName,
-            isCaller,
-            currentUserId
-          );
-          console.log(`[DAILY_CALL] ${userRole}_TOKEN_CREATED = true`);
-        } catch (tokErr: any) {
-          console.error(`[DAILY_CALL] ${userRole}_TOKEN_CREATED = false:`, tokErr);
-          if (isMounted) {
-            setDailyError(tokErr.message || 'خطأ في إنشاء رمز Meeting Token');
-          }
-          // Strict stop: do not enter private room without token
-          return;
-        }
+        if (cancelled) return;
 
         if (!token) {
-          if (isMounted) {
-            setDailyError('فشل في استلام رمز الدخول للغرفة الخاصة');
-          }
-          return;
+          throw new Error('لم يرجع الخادم Meeting Token');
         }
 
-        if (!isMounted || !dailyContainerRef.current) return;
+        console.log('[DAILY_SIMPLE] TOKEN_CREATED = true');
 
-        try {
-          await dailyService.joinPrebuilt(
-            dailyContainerRef.current,
-            activeCall.roomUrl,
-            currentUserName,
-            activeCall.callType,
-            token
-          );
-        } catch (err: any) {
-          console.error('[DAILY_ERROR] Failed to joinPrebuilt:', err);
-          if (isMounted) {
-            setDailyError(err.message || 'فشل الاتصال بغرفة Daily');
-          }
+        setMeetingToken(token);
+      } catch (err: any) {
+        if (cancelled) return;
+
+        console.error('[DAILY_SIMPLE] TOKEN_ERROR', err);
+
+        setError(
+          err?.message ||
+            'فشل الحصول على تصريح دخول غرفة المكالمة'
+        );
+      } finally {
+        if (!cancelled) {
+          setLoadingToken(false);
         }
-      })();
-    }
+      }
+    };
+
+    prepareDaily();
 
     return () => {
-      isMounted = false;
+      cancelled = true;
     };
-  }, [activeCall.roomUrl, activeCall.roomId, activeCall.direction, activeCall.callType, callState, currentUserId, currentUserName, onEndCall]);
+  }, [
+    isConnected,
+    activeCall.roomUrl,
+    activeCall.direction,
+    roomName,
+    currentUserId,
+    currentUserName,
+  ]);
 
-  // Bind local stream (for simulated calls or preview)
+  /*
+   * عداد مدة المكالمة
+   */
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
+    if (!isConnected) {
+      setSeconds(0);
+      return;
     }
-  }, [localStream]);
 
-  // Bind remote stream (for simulated calls)
-  useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
+    const timer = window.setInterval(() => {
+      setSeconds((value) => value + 1);
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isConnected]);
+
+  const durationText = useMemo(() => {
+    const min = Math.floor(seconds / 60);
+    const sec = seconds % 60;
+
+    return `${String(min).padStart(2, '0')}:${String(sec).padStart(
+      2,
+      '0'
+    )}`;
+  }, [seconds]);
+
+  /*
+   * Daily Prebuilt يقبل Meeting Token داخل الرابط.
+   */
+  const dailyUrl = useMemo(() => {
+    if (!activeCall.roomUrl || !meetingToken) {
+      return '';
     }
-  }, [remoteStream]);
 
-  // Duration timer when connected
-  useEffect(() => {
-    if (callState === 'connected') {
-      const interval = setInterval(() => {
-        setDuration((prev) => prev + 1);
-      }, 1000);
-      return () => clearInterval(interval);
-    } else {
-      setDuration(0);
-    }
-  }, [callState]);
+    const separator = activeCall.roomUrl.includes('?') ? '&' : '?';
 
-  // Scroll chat to bottom
-  useEffect(() => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-    }
-  }, [chatMessages, showChat]);
+    return `${activeCall.roomUrl}${separator}t=${encodeURIComponent(
+      meetingToken
+    )}`;
+  }, [activeCall.roomUrl, meetingToken]);
 
-  const formatDuration = (sec: number) => {
-    const mins = Math.floor(sec / 60);
-    const remainingSecs = sec % 60;
-    return `${mins.toString().padStart(2, '0')}:${remainingSecs.toString().padStart(2, '0')}`;
-  };
-
-  const handleAudioToggle = () => {
-    if (activeCall.roomUrl && dailyJoined) {
-      const target = dailyService.toggleAudio();
-      setIsMuted(!target);
-    } else {
-      const newState = onToggleAudio();
-      setIsMuted(!newState);
-    }
-  };
-
-  const handleVideoToggle = () => {
-    if (activeCall.roomUrl && dailyJoined) {
-      const target = dailyService.toggleVideo();
-      setIsVideoOff(!target);
-    } else {
-      const newState = onToggleVideo();
-      setIsVideoOff(!newState);
-    }
-  };
-
-  const handleSendChat = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    onSendMessage(chatInput.trim());
-    setChatInput('');
-    playMessageTone();
-  };
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
-    }
-  };
-
-  const getStatusText = () => {
+  const statusText = () => {
     switch (callState) {
       case 'calling':
+        return 'جاري الاتصال...';
+
       case 'ringing':
-        return 'جاري الاتصال والرنين...';
+        return 'جاري الرنين...';
+
       case 'incoming':
-        return 'مكالمة واردة...';
+        return 'مكالمة واردة';
+
       case 'connected':
-        return formatDuration(duration);
+        return durationText;
+
       case 'ended':
-        return 'تم إنهاء المكالمة';
+        return 'انتهت المكالمة';
+
       default:
         return 'جاري التهيئة...';
     }
@@ -268,303 +205,150 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
 
   return (
     <div
-      id="video-call-screen-container"
-      className="fixed inset-0 z-40 bg-slate-950 text-white flex flex-col select-none overflow-hidden font-sans"
       dir="rtl"
+      className="fixed inset-0 z-[9999] bg-[#07111f] text-white flex flex-col"
     >
-      {/* Top Header Bar */}
-      <div className="absolute top-0 inset-x-0 z-30 p-4 sm:p-6 bg-gradient-to-b from-black/80 via-black/40 to-transparent flex items-center justify-between pointer-events-auto">
+      {/* Header */}
+      <header className="h-[72px] shrink-0 flex items-center justify-between px-4 sm:px-6 border-b border-white/10 bg-[#07111f]">
         <div className="flex items-center gap-3">
           <div
             className={`w-11 h-11 rounded-2xl ${
-              activeCall.peerAvatarColor || 'bg-gradient-to-br from-[#25D366] to-[#128C7E]'
-            } flex items-center justify-center font-bold text-lg shadow-md border border-white/20`}
+              activeCall.peerAvatarColor || 'bg-emerald-600'
+            } flex items-center justify-center text-lg font-black`}
           >
-            {activeCall.peerName ? activeCall.peerName.charAt(0) : '؟'}
+            {activeCall.peerName?.charAt(0) || '؟'}
           </div>
+
           <div>
-            <h2 className="font-bold text-base sm:text-lg text-white flex items-center gap-2">
-              <span>{activeCall.peerName}</span>
-              {activeCall.isSimulated && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/30 font-bold">
-                  مكالمة تجريبية
-                </span>
-              )}
+            <h2 className="font-black text-sm sm:text-base">
+              {activeCall.peerName}
             </h2>
-            <div className="flex items-center gap-2 text-xs text-slate-300">
-              <span className="font-mono" dir="ltr">
-                {activeCall.peerPhone}
+
+            <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+              {activeCall.callType === 'video' ? (
+                <Video className="w-3.5 h-3.5" />
+              ) : (
+                <Mic className="w-3.5 h-3.5" />
+              )}
+
+              <span>
+                {activeCall.callType === 'video'
+                  ? 'مكالمة فيديو'
+                  : 'مكالمة صوتية'}
               </span>
+
               <span>•</span>
+
               <span
-                className={`flex items-center gap-1 font-mono font-bold ${
-                  callState === 'connected' ? 'text-[#25D366]' : 'text-amber-300 animate-pulse'
-                }`}
+                className={
+                  isConnected
+                    ? 'text-emerald-400 font-bold'
+                    : 'text-amber-300'
+                }
               >
-                {callState === 'connected' && (
-                  <span className="w-2 h-2 rounded-full bg-[#25D366] animate-ping inline-block" />
-                )}
-                {getStatusText()}
+                {statusText()}
               </span>
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-xs font-semibold text-[#25D366]">
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 text-[11px] font-bold">
             <ShieldCheck className="w-4 h-4" />
-            <span>مشفر Daily HD</span>
+            Daily
           </div>
 
           <button
             type="button"
-            onClick={toggleFullscreen}
-            className="p-2.5 rounded-2xl bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 text-white transition cursor-pointer"
-            title="ملء الشاشة"
+            onClick={onEndCall}
+            className="h-11 px-4 rounded-xl bg-rose-500 hover:bg-rose-600 active:scale-95 transition text-white flex items-center gap-2 font-bold text-xs"
           >
-            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            <PhoneOff className="w-4 h-4" />
+            إنهاء
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Main Call Stage Area */}
-      <div className="relative flex-1 w-full h-full bg-slate-950 flex items-center justify-center overflow-hidden">
-        {/* Floating animated reactions */}
-        <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
-          {floatingReactions.map((reaction) => (
+      {/* Call area */}
+      <main className="relative flex-1 min-h-0">
+        {!isConnected && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
             <div
-              key={reaction.id}
-              className="absolute text-4xl sm:text-5xl animate-float-up opacity-90 drop-shadow-lg"
-              style={{
-                left: `${reaction.x}%`,
-                bottom: '10%',
-              }}
+              className={`w-24 h-24 rounded-[28px] ${
+                activeCall.peerAvatarColor || 'bg-emerald-600'
+              } flex items-center justify-center text-4xl font-black shadow-2xl mb-5`}
             >
-              {reaction.emoji}
+              {activeCall.peerName?.charAt(0) || '؟'}
             </div>
-          ))}
-        </div>
 
-        {/* State 1: Outgoing Calling / Ringing */}
-        {(callState === 'calling' || callState === 'ringing') && (
-          <div className="flex flex-col items-center justify-center p-8 text-center animate-in fade-in z-20">
-            <div className="relative mb-8">
-              <div className="absolute -inset-4 rounded-full bg-[#25D366]/20 animate-ping" />
-              <div className="absolute -inset-8 rounded-full bg-[#25D366]/10 animate-pulse" />
-              <div
-                className={`w-36 h-36 sm:w-44 sm:h-44 rounded-3xl ${
-                  activeCall.peerAvatarColor || 'bg-gradient-to-br from-[#25D366] via-[#128C7E] to-slate-800'
-                } flex items-center justify-center text-6xl sm:text-7xl font-bold shadow-2xl border-4 border-slate-700/50 relative z-10`}
-              >
-                {activeCall.peerName ? activeCall.peerName.charAt(0) : '؟'}
-              </div>
-            </div>
-            <h3 className="text-2xl sm:text-3xl font-bold text-white mb-2">{activeCall.peerName}</h3>
-            <p className="text-base sm:text-lg text-slate-400 font-mono mb-4" dir="ltr">
-              {activeCall.peerPhone}
+            <h2 className="font-black text-xl mb-2">
+              {activeCall.peerName}
+            </h2>
+
+            <p className="text-sm text-amber-300 animate-pulse">
+              {statusText()}
             </p>
-            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900 border border-slate-800 text-amber-300 font-medium text-sm animate-pulse">
-              <Wifi className="w-4 h-4 animate-spin" />
-              <span>جاري الاتصال والرنين بانتظار الرد...</span>
+          </div>
+        )}
+
+        {isConnected && loadingToken && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#07111f]">
+            <Loader2 className="w-9 h-9 animate-spin text-emerald-400 mb-4" />
+
+            <h3 className="font-bold">
+              جاري تجهيز المكالمة...
+            </h3>
+
+            <p className="text-xs text-slate-400 mt-2">
+              يتم تأمين الدخول إلى الغرفة
+            </p>
+          </div>
+        )}
+
+        {isConnected && error && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#07111f] p-5">
+            <div className="max-w-sm w-full rounded-3xl bg-white text-slate-900 p-7 text-center shadow-2xl">
+              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-red-50 flex items-center justify-center">
+                <AlertTriangle className="w-7 h-7 text-red-500" />
+              </div>
+
+              <h3 className="font-black text-lg mb-2">
+                تعذر فتح المكالمة
+              </h3>
+
+              <p className="text-xs text-slate-500 leading-6">
+                {error}
+              </p>
+
+              <button
+                type="button"
+                onClick={onEndCall}
+                className="w-full h-11 mt-6 rounded-xl bg-slate-900 text-white font-bold text-sm"
+              >
+                إغلاق
+              </button>
             </div>
           </div>
         )}
 
-        {/* State 2: Daily Prebuilt Embedded Call Container */}
-        {activeCall.roomUrl && (
-          <div
-            ref={dailyContainerRef}
-            id="daily-call-frame-container"
-            className={`w-full h-full absolute inset-0 z-10 ${
-              callState === 'connected' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-            }`}
+        {isConnected && dailyUrl && !error && (
+          <iframe
+            key={dailyUrl}
+            src={dailyUrl}
+            title="SNNS Daily Call"
+            allow="camera; microphone; fullscreen; display-capture; autoplay"
+            allowFullScreen
+            className="absolute inset-0 w-full h-full border-0 bg-[#07111f]"
+            onLoad={() => {
+              console.log('[DAILY_SIMPLE] IFRAME_LOADED = true');
+              console.log(
+                '[DAILY_SIMPLE] ROOM_NAME =',
+                roomName
+              );
+            }}
           />
         )}
-
-        {/* Daily Error state if any */}
-        {dailyError && (
-          <div className="absolute top-20 inset-x-4 max-w-md mx-auto z-30 p-4 rounded-2xl bg-rose-950/90 border border-rose-600 text-rose-200 text-xs shadow-xl text-center">
-            {dailyError}
-          </div>
-        )}
-
-        {/* Simulated mode fallback */}
-        {activeCall.isSimulated && callState === 'connected' && (
-          <div className="w-full h-full relative flex items-center justify-center">
-            <div className="flex flex-col items-center justify-center p-8 text-center">
-              <div className="w-32 h-32 rounded-3xl bg-[#128C7E] flex items-center justify-center text-5xl font-bold mb-4 shadow-xl">
-                {activeCall.peerName.charAt(0)}
-              </div>
-              <h3 className="text-xl font-bold text-white mb-1">{activeCall.peerName}</h3>
-              <p className="text-xs text-[#25D366]">مكالمة تجريبية نشطة (الصوت والفيديو محاكاة)</p>
-            </div>
-          </div>
-        )}
-
-        {/* In-Call Slide-Over Chat */}
-        {showChat && (
-          <div className="absolute top-16 bottom-28 right-4 w-80 sm:w-96 bg-slate-900/95 backdrop-blur-xl border border-slate-700/80 rounded-3xl z-30 flex flex-col shadow-2xl overflow-hidden animate-in slide-in-from-right duration-200">
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-800/60">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-[#25D366]" />
-                <span className="text-sm font-bold text-white">محادثة المكالمة</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowChat(false)}
-                className="p-1.5 rounded-xl hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div ref={chatScrollRef} className="flex-1 p-4 overflow-y-auto space-y-3">
-              {chatMessages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 text-xs">
-                  <MessageSquare className="w-8 h-8 text-slate-600 mb-2" />
-                  <span>لا توجد رسائل بعد. اكتب رسالة فورية أثناء المكالمة!</span>
-                </div>
-              ) : (
-                chatMessages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex flex-col ${
-                      msg.senderPhone === activeCall.peerPhone ? 'items-start' : 'items-end'
-                    }`}
-                  >
-                    <span className="text-[10px] text-slate-400 mb-0.5">{msg.senderName}</span>
-                    <div
-                      className={`px-3.5 py-2 rounded-2xl text-xs max-w-[85%] break-words font-medium ${
-                        msg.senderPhone === activeCall.peerPhone
-                          ? 'bg-slate-800 text-slate-100 rounded-tr-none'
-                          : 'bg-[#25D366] text-white rounded-tl-none font-bold'
-                      }`}
-                    >
-                      {msg.text}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <form
-              onSubmit={handleSendChat}
-              className="p-3 border-t border-slate-800 flex items-center gap-2 bg-slate-800/40"
-            >
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="اكتب رسالة..."
-                className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-400 outline-none focus:border-[#25D366]"
-              />
-              <button
-                type="submit"
-                disabled={!chatInput.trim()}
-                className="p-2.5 rounded-xl bg-[#25D366] hover:bg-[#1ebd5e] disabled:opacity-40 text-white transition cursor-pointer"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* Quick Emoji Floating Drawer */}
-        {showEmojiPicker && (
-          <div className="absolute bottom-28 inset-x-0 mx-auto max-w-sm px-4 z-30 flex items-center justify-center gap-2 p-2 bg-slate-900/90 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl animate-in zoom-in-95 duration-150">
-            {QUICK_EMOJIS.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                onClick={() => {
-                  onTriggerReaction(emoji);
-                  setShowEmojiPicker(false);
-                }}
-                className="text-2xl p-1.5 hover:scale-125 active:scale-95 transition cursor-pointer"
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Floating Bottom Control Dock */}
-      <div className="absolute bottom-0 inset-x-0 z-30 p-4 sm:p-6 bg-gradient-to-t from-black/90 via-black/60 to-transparent flex items-center justify-center pointer-events-auto">
-        <div className="flex items-center gap-3 sm:gap-4 bg-slate-900/90 backdrop-blur-xl px-5 sm:px-7 py-3 rounded-3xl border border-slate-700/60 shadow-2xl">
-          {/* Audio Mute */}
-          <button
-            type="button"
-            id="call-mute-mic-btn"
-            onClick={handleAudioToggle}
-            className={`p-3.5 rounded-2xl transition duration-150 shadow-md cursor-pointer ${
-              isMuted
-                ? 'bg-rose-600 hover:bg-rose-500 text-white'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-            }`}
-            title={isMuted ? 'إلغاء كتم الصوت' : 'كتم الميكروفون'}
-          >
-            {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-          </button>
-
-          {/* Video Toggle */}
-          {activeCall.callType === 'video' && (
-            <button
-              type="button"
-              id="call-toggle-camera-btn"
-              onClick={handleVideoToggle}
-              className={`p-3.5 rounded-2xl transition duration-150 shadow-md cursor-pointer ${
-                isVideoOff
-                  ? 'bg-rose-600 hover:bg-rose-500 text-white'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-              }`}
-              title={isVideoOff ? 'تشغيل الكاميرا' : 'إيقاف الكاميرا'}
-            >
-              {isVideoOff ? <VideoOff className="w-5 h-5" /> : <VideoIcon className="w-5 h-5" />}
-            </button>
-          )}
-
-          {/* Reactions */}
-          <button
-            type="button"
-            id="call-reactions-btn"
-            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className="p-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-amber-400 transition duration-150 shadow-md cursor-pointer"
-            title="تفاعل بالرموز التعبيرية"
-          >
-            <Smile className="w-5 h-5" />
-          </button>
-
-          {/* In-call Chat */}
-          <button
-            type="button"
-            id="call-chat-btn"
-            onClick={() => setShowChat(!showChat)}
-            className={`p-3.5 rounded-2xl transition duration-150 shadow-md relative cursor-pointer ${
-              showChat
-                ? 'bg-[#25D366] text-white'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-            }`}
-            title="الدردشة أثناء المكالمة"
-          >
-            <MessageSquare className="w-5 h-5" />
-            {chatMessages.length > 0 && !showChat && (
-              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-[#25D366] rounded-full border-2 border-slate-900" />
-            )}
-          </button>
-
-          {/* End Call / Cancel Button */}
-          <button
-            type="button"
-            id="end-call-btn"
-            onClick={onEndCall}
-            className="p-4 rounded-2xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-white transition duration-150 shadow-xl shadow-rose-600/40 mr-1 cursor-pointer"
-            title={callState === 'connected' ? 'إنهاء المكالمة' : 'إلغاء الاتصال'}
-          >
-            <PhoneOff className="w-6 h-6" />
-          </button>
-        </div>
-      </div>
+      </main>
     </div>
   );
 };
