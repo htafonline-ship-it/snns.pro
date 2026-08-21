@@ -3,6 +3,7 @@ import { User, ActiveCall, CallState, CallType, ChatMessage, FloatingReaction } 
 import { AuthScreen } from './components/AuthScreen';
 import { MainScreen } from './components/MainScreen';
 import { VideoCallScreen } from './components/VideoCallScreen';
+import { IncomingCallModal } from './components/IncomingCallModal';
 import {
   playOutgoingRing,
   playIncomingRing,
@@ -23,6 +24,7 @@ import {
 } from './lib/firestoreService';
 import { zegoService } from './utils/zegoService';
 import { callEngine } from './utils/callEngine';
+import { dailyService } from './utils/dailyService';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -38,6 +40,7 @@ export function App() {
   const [pendingIncomingCall, setPendingIncomingCall] = useState<{
     callId: string;
     roomId: string;
+    roomUrl?: string;
     caller_id: string;
     caller_name: string;
     caller_phone: string;
@@ -123,7 +126,8 @@ export function App() {
         simulatedBotTimerRef.current = null;
       }
 
-      // 1. Close CallEngine & WebRTC & ZEGOCLOUD
+      // 1. Close Daily, CallEngine, WebRTC & ZEGOCLOUD
+      await dailyService.leave();
       await zegoService.leaveRoom();
       callEngine.closePeerConnection();
 
@@ -233,10 +237,12 @@ export function App() {
 
         const callerProfile = await getUserProfile(call.caller_id);
         const roomId = call.room_id || `room_${[call.caller_id, currentUser.uid].sort().join('_')}`;
+        const roomUrl = call.room_url || '';
 
         setPendingIncomingCall({
           callId: call.id,
           roomId,
+          roomUrl,
           caller_id: call.caller_id,
           caller_name: callerProfile?.name || call.caller_name || 'مستخدم تواصل',
           caller_phone: callerProfile?.phone || call.caller_phone || '',
@@ -393,6 +399,7 @@ export function App() {
                 setPendingIncomingCall({
                   callId: data.callId,
                   roomId: data.roomId,
+                  roomUrl: data.roomUrl || data.roomId,
                   caller_id: callerUid,
                   caller_name: callerProfile?.name || data.caller_name || data.from?.name || 'مستخدم',
                   caller_phone: callerProfile?.phone || data.caller_phone || data.from?.phone || '',
@@ -425,29 +432,16 @@ export function App() {
                 stopAllTones();
                 playConnectedTone();
                 setCallState('connected');
-                setActiveCall((prev) => (prev ? { ...prev, startedAt: Date.now() } : null));
-
-                // Caller: Ensure ZEGOCLOUD room is joined and publishing
-                if (currentUser && activeCallRef.current?.peerUid) {
-                  const targetPeerUid = activeCallRef.current.peerUid;
-                  const roomId = data.roomId || `room_${[currentUser.uid, targetPeerUid].sort().join('_')}`;
-                  zegoService
-                    .joinAndPublish({
-                      role: 'A',
-                      roomId,
-                      uid: currentUser.uid,
-                      name: currentUser.name,
-                      callType: activeCallRef.current.callType,
-                      callId: currentCallDocIdRef.current || undefined,
-                      facingMode: currentFacingMode,
-                    })
-                    .then((stream) => {
-                      if (stream) setLocalStream(stream);
-                    })
-                    .catch((err) => {
-                      console.error('[ZEGO_ERROR] Caller joinAndPublish on accept error:', err);
-                    });
-                }
+                setActiveCall((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        startedAt: Date.now(),
+                        roomUrl: prev.roomUrl || data.roomUrl,
+                        roomId: prev.roomId || data.roomId,
+                      }
+                    : null
+                );
                 break;
               }
 
@@ -576,7 +570,7 @@ export function App() {
     };
   }, [currentUser, endCall, sendWsSignal]);
 
-  // Initiate an Outgoing Call with ZEGOCLOUD + Firestore
+  // Initiate an Outgoing Call with Daily.co + Firestore
   const handleStartCall = async (
     targetUser: User,
     callType: CallType,
@@ -595,15 +589,28 @@ export function App() {
     }
     console.log(`[CALL] CALLER_UID = ${currentUser.uid}`);
     console.log(`[CALL] CALLEE_UID = ${targetUser.uid}`);
-    console.log('[ZEGO] INVITATION_SEND_START');
+    console.log('[DAILY] CREATE_ROOM_START');
 
     try {
-      // 1. Single Deterministic roomId using Firebase UIDs
-      const roomId = isSimulated
-        ? `room_sim_${currentUser.uid}_${Date.now()}`
-        : `room_${[currentUser.uid, targetUser.uid].sort().join('_')}`;
+      let roomUrl = '';
+      let roomId = '';
 
-      // 2. Set active call state
+      if (!isSimulated) {
+        try {
+          const roomData = await dailyService.createRoom(callType, currentUser.uid, targetUser.uid);
+          roomUrl = roomData.url;
+          roomId = roomData.name;
+          console.log('[DAILY] ROOM_CREATED = true', { roomUrl, roomId });
+        } catch (dailyErr: any) {
+          console.error('[DAILY_ERROR] Failed to create room:', dailyErr);
+          alert(dailyErr.message || 'فشل في إنشاء غرفة Daily.co. يرجى التحقق من المفتاح في الإعدادات.');
+          return;
+        }
+      } else {
+        roomId = `room_sim_${currentUser.uid}_${Date.now()}`;
+      }
+
+      // Set active call state
       setActiveCall({
         peerUid: targetUser.uid,
         peerPhone: targetUser.phone,
@@ -612,41 +619,14 @@ export function App() {
         peerAvatarColor: targetUser.avatarColor,
         callType,
         direction: 'outgoing',
+        roomId,
+        roomUrl,
         isSimulated,
       });
       setCallState('calling');
       playOutgoingRing();
 
-      // 3. Send Official ZEGOCLOUD Call Invitation using Firebase UID
-      if (!isSimulated) {
-        try {
-          await zegoService.sendCallInvitation(
-            targetUser.uid,
-            targetUser.name,
-            callType === 'video'
-          );
-        } catch (zegoErr) {
-          console.warn('[ZEGO] sendCallInvitation note:', zegoErr);
-        }
-
-        try {
-          const mediaStream = await zegoService.joinAndPublish({
-            role: 'A',
-            roomId,
-            uid: currentUser.uid,
-            name: currentUser.name,
-            callType,
-            facingMode: currentFacingMode,
-          });
-          if (mediaStream) {
-            setLocalStream(mediaStream);
-          }
-        } catch (zegoErr) {
-          console.error('[ZEGO_ERROR] Caller joinAndPublish error:', zegoErr);
-        }
-      }
-
-      // 4. Create Call record in Firestore
+      // Create Call record in Firestore
       if (!isSimulated) {
         clearMissedCallTimer();
 
@@ -660,6 +640,7 @@ export function App() {
           call_type: callType,
           status: 'ringing',
           room_id: roomId,
+          room_url: roomUrl,
           created_at: Date.now(),
           duration: 0,
         });
@@ -710,7 +691,7 @@ export function App() {
         return;
       }
 
-      // 5. Send WebSocket Call Invitation to recipient
+      // Send WebSocket Call Invitation to recipient
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
@@ -721,15 +702,13 @@ export function App() {
             callee_id: targetUser.uid,
             callType,
             roomId,
+            roomUrl,
             callId: currentCallDocIdRef.current || `call_${Date.now()}`,
           })
         );
-        console.log('[ZEGO] INVITATION_SENT = true');
-      } else {
-        console.log('[ZEGO] INVITATION_SENT = true');
+        console.log('[CALL] INVITATION_SENT = true');
       }
     } catch (err) {
-      console.log('[ZEGO] INVITATION_SENT = false');
       console.error('Call initiation error:', err);
       endCall('init_error', false);
     }
@@ -741,9 +720,8 @@ export function App() {
     const callInfo = { ...pendingIncomingCall };
     clearMissedCallTimer();
     stopAllTones();
-    console.log('[ACCEPT] BUTTON_CLICKED');
-    console.log('[ACCEPT] ZEGO_ACCEPT_START');
-    console.log('[ACCEPT] ZEGO_ACCEPT_SUCCESS = true');
+    console.log('[ACCEPT] BUTTON_CLICKED = true');
+    console.log('[ACCEPT] DAILY_ACCEPT_START');
 
     try {
       // 1. Update Firestore call document atomically FIRST
@@ -767,37 +745,21 @@ export function App() {
 
       // 3. Set Active Call State
       setActiveCall({
+        callId: callInfo.callId,
         peerUid: callInfo.caller_id,
         peerPhone: callInfo.caller_phone,
         peerName: callInfo.caller_name,
         peerAvatarColor: callInfo.caller_avatarColor,
         callType: callInfo.callType,
         direction: 'incoming',
+        roomId: callInfo.roomId,
+        roomUrl: callInfo.roomUrl,
         startedAt: Date.now(),
       });
       setCallState('connected');
       playConnectedTone();
 
-      // 4. Callee ZEGOCLOUD Login & Publish into the EXACT SAME roomId
-      try {
-        const mediaStream = await zegoService.joinAndPublish({
-          role: 'B',
-          roomId: callInfo.roomId,
-          uid: currentUser.uid,
-          name: currentUser.name,
-          callType: callInfo.callType,
-          callId: callInfo.callId,
-          facingMode: currentFacingMode,
-          callerRoomId: callInfo.roomId,
-        });
-        if (mediaStream) {
-          setLocalStream(mediaStream);
-        }
-      } catch (zegoErr) {
-        console.error('[ZEGO_ERROR] Callee joinAndPublish error:', zegoErr);
-      }
-
-      // 5. Send WebSocket Call Accepted notice
+      // 4. Send WebSocket Call Accepted notice
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
@@ -806,9 +768,11 @@ export function App() {
             callee_id: currentUser.uid,
             callId: callInfo.callId,
             roomId: callInfo.roomId,
+            roomUrl: callInfo.roomUrl,
           })
         );
       }
+      console.log('[ACCEPT] DAILY_ACCEPT_SUCCESS = true');
     } catch (err) {
       console.error('Failed to accept call:', err);
       handleRejectIncomingCall();
@@ -822,9 +786,7 @@ export function App() {
     clearMissedCallTimer();
     stopAllTones();
     playEndTone();
-    console.log('[REJECT] BUTTON_CLICKED');
-    console.log('[REJECT] ZEGO_REJECT_START');
-    console.log('[REJECT] ZEGO_REJECT_SUCCESS = true');
+    console.log('[REJECT] BUTTON_CLICKED = true');
 
     // 1. Update Firestore call document atomically
     if (callInfo.callId) {
@@ -972,11 +934,29 @@ export function App() {
 
   return (
     <div className="w-full min-h-screen bg-slate-950 font-sans selection:bg-emerald-500 selection:text-white">
+      {/* Incoming Call Modal for Callee */}
+      {pendingIncomingCall && !activeCall && (
+        <IncomingCallModal
+          call={{
+            peerPhone: pendingIncomingCall.caller_phone,
+            peerName: pendingIncomingCall.caller_name,
+            peerAvatarColor: pendingIncomingCall.caller_avatarColor,
+            callType: pendingIncomingCall.callType,
+            direction: 'incoming',
+            roomId: pendingIncomingCall.roomId,
+            roomUrl: pendingIncomingCall.roomUrl,
+          }}
+          onAccept={handleAcceptIncomingCall}
+          onReject={handleRejectIncomingCall}
+        />
+      )}
+
       {/* Active Video/Voice Call Screen */}
       {activeCall && (
         <VideoCallScreen
           activeCall={activeCall}
           callState={callState}
+          currentUserName={currentUser.name}
           localStream={localStream}
           remoteStream={remoteStream}
           onEndCall={() => endCall('user_ended', true)}

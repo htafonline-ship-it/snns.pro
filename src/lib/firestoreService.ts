@@ -247,6 +247,7 @@ export async function createCallRecord(call: {
   call_type: CallType;
   status: CallStatus;
   room_id?: string;
+  room_url?: string;
   created_at?: number;
   started_at?: number | null;
   answered_at?: number | null;
@@ -269,6 +270,7 @@ export async function createCallRecord(call: {
     call_type: call.call_type,
     status: initialStatus,
     room_id: call.room_id || '',
+    room_url: call.room_url || '',
     created_at: Date.now(),
     started_at: call.started_at || null,
     answered_at: call.answered_at || null,
@@ -394,6 +396,8 @@ export function subscribeUserCalls(userUid: string, callback: (calls: CallLog[])
         call_type: d.call_type || 'video',
         status: d.status || 'ended',
         duration: d.duration || 0,
+        room_id: d.room_id || '',
+        room_url: d.room_url || '',
         created_at: d.created_at || Date.now(),
         started_at: d.started_at,
         answered_at: d.answered_at,
@@ -417,6 +421,8 @@ export function subscribeUserCalls(userUid: string, callback: (calls: CallLog[])
         call_type: d.call_type || 'video',
         status: d.status || 'ended',
         duration: d.duration || 0,
+        room_id: d.room_id || '',
+        room_url: d.room_url || '',
         created_at: d.created_at || Date.now(),
         started_at: d.started_at,
         answered_at: d.answered_at,
@@ -479,6 +485,7 @@ export function subscribeIncomingCalls(
           call_type: d.call_type || 'video',
           status: d.status || 'ringing',
           room_id: d.room_id || '',
+          room_url: d.room_url || '',
           duration: d.duration || 0,
           created_at: d.created_at || Date.now(),
           started_at: d.started_at,
@@ -525,6 +532,7 @@ export function subscribeCallById(
         call_type: d.call_type || 'video',
         status: d.status || 'ringing',
         room_id: d.room_id || '',
+        room_url: d.room_url || '',
         duration: d.duration || 0,
         created_at: d.created_at || Date.now(),
         started_at: d.started_at,

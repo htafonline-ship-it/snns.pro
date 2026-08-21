@@ -59,6 +59,7 @@ export interface ActiveCall {
   callType: CallType;
   direction: 'outgoing' | 'incoming';
   roomId?: string;
+  roomUrl?: string;
   startedAt?: number;
   isSimulated?: boolean;
   isStealth?: boolean;
@@ -76,6 +77,7 @@ export interface CallLog {
   status: CallStatus;
   duration: number; // in seconds
   room_id?: string;
+  room_url?: string;
   created_at: number;
   started_at?: number | null;
   answered_at?: number | null;

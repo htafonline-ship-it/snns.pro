@@ -9,8 +9,10 @@ import { createServer as createViteServer } from 'vite';
 // ZEGO_SERVER_SECRET is strictly guarded on backend and NEVER exposed to frontend
 const ZEGO_APP_ID = Number(process.env.ZEGO_APP_ID) || 366567418;
 const ZEGO_SERVER_SECRET = process.env.ZEGO_SERVER_SECRET || '0123456789abcdef0123456789abcdef';
+const DAILY_API_KEY = process.env.DAILY_API_KEY || '';
 
 console.log(`ACTIVE_ZEGO_APP_ID = ${ZEGO_APP_ID}`);
+console.log(`DAILY_API_KEY_PRESENT = ${Boolean(DAILY_API_KEY)}`);
 
 export enum ZegoErrorCode {
   success = 0,
@@ -176,6 +178,90 @@ async function startServer() {
     res.json({
       appId: ZEGO_APP_ID,
       serverUrl: `wss://webliveroom${ZEGO_APP_ID}-api.coolzcloud.com/ws`,
+    });
+  });
+
+  /**
+   * Daily.co Room Creation Endpoint
+   * Automatically creates a single Daily Room for Audio/Video calls using DAILY_API_KEY
+   */
+  app.post('/api/daily/room', async (req, res) => {
+    try {
+      const { callType, callerUid, calleeUid, roomId } = req.body;
+      const apiKey = (process.env.DAILY_API_KEY || '').trim();
+
+      console.log(`[DAILY] CREATE_ROOM_REQUEST callType=${callType} caller=${callerUid} callee=${calleeUid}`);
+      console.log(`[DAILY] API_KEY_PRESENT = ${Boolean(apiKey)}`);
+
+      if (!apiKey) {
+        console.error('[DAILY_ERROR] DAILY_API_KEY is not configured in environment variables');
+        return res.status(400).json({
+          error: 'مفتاح DAILY_API_KEY غير متوفر في متغيرات البيئة. يرجى إضافته في إعدادات المنصة (Settings).',
+          missingKey: 'DAILY_API_KEY',
+        });
+      }
+
+      // Generate a clean room name
+      const randomSuffix = Math.random().toString(36).substring(2, 8);
+      const rawName = roomId ? `${roomId}_${randomSuffix}` : `snns_${Date.now()}_${randomSuffix}`;
+      const roomName = rawName.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 60);
+
+      const isAudioOnly = callType === 'audio';
+
+      console.log(`[DAILY] Requesting room creation from Daily API: name=${roomName}`);
+
+      const dailyRes = await fetch('https://api.daily.co/v1/rooms', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          name: roomName,
+          privacy: 'public',
+          properties: {
+            exp: Math.floor(Date.now() / 1000) + 7200, // 2 hours
+            enable_chat: true,
+            enable_screenshare: true,
+            enable_knocking: false,
+            start_video_off: isAudioOnly,
+            start_audio_off: false,
+          },
+        }),
+      });
+
+      const data: any = await dailyRes.json();
+
+      if (!dailyRes.ok) {
+        console.error('[DAILY_ERROR] Room creation error from Daily API:', data);
+        return res.status(dailyRes.status).json({
+          error: data.error || data.info || 'فشل في إنشاء غرفة Daily.co',
+          details: data,
+        });
+      }
+
+      console.log(`[DAILY] ROOM_CREATED_SUCCESS = true url=${data.url} name=${data.name}`);
+      return res.json({
+        url: data.url,
+        name: data.name,
+        roomId: data.name,
+        roomUrl: data.url,
+      });
+    } catch (err: any) {
+      console.error('[DAILY_ERROR] Exception in /api/daily/room:', err);
+      return res.status(500).json({
+        error: err.message || 'خطأ غير متوقع أثناء إنشاء غرفة Daily',
+      });
+    }
+  });
+
+  /**
+   * Daily.co status/config endpoint
+   */
+  app.get('/api/daily/config', (req, res) => {
+    const apiKey = (process.env.DAILY_API_KEY || '').trim();
+    res.json({
+      configured: Boolean(apiKey),
     });
   });
 
