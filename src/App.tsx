@@ -126,10 +126,15 @@ export function App() {
         simulatedBotTimerRef.current = null;
       }
 
-      // 1. Close Daily, CallEngine, WebRTC & ZEGOCLOUD
+      const currentCall = activeCallRef.current;
+      const callDocId = currentCallDocIdRef.current;
+      const currentUiState = callState;
+
+      // 1. Close Daily session (Daily is the sole media provider)
       await dailyService.leave();
-      await zegoService.leaveRoom();
-      callEngine.closePeerConnection();
+      if (currentCall?.isSimulated) {
+        callEngine.closePeerConnection();
+      }
 
       // 2. Stop local stream tracks
       if (localStream) {
@@ -139,10 +144,6 @@ export function App() {
       setRemoteStream(null);
 
       // 3. Update call record in Firestore with atomic transition
-      const callDocId = currentCallDocIdRef.current;
-      const currentCall = activeCallRef.current;
-      const currentUiState = callState;
-
       if (callDocId && currentUser) {
         if (currentUiState === 'calling' || currentUiState === 'ringing') {
           console.log('[CALL] CALLER_CANCELLED = true');
@@ -820,18 +821,14 @@ export function App() {
     setCallState('idle');
   };
 
-  // Audio Toggle
+  // Audio Toggle (Delegated exclusively to Daily)
   const handleToggleAudio = (): boolean => {
-    const isMuted = zegoService.toggleAudio();
-    callEngine.toggleAudio();
-    return isMuted;
+    return dailyService.toggleAudio();
   };
 
-  // Video Toggle
+  // Video Toggle (Delegated exclusively to Daily)
   const handleToggleVideo = (): boolean => {
-    const isVideoOff = zegoService.toggleVideo();
-    callEngine.toggleVideo();
-    return isVideoOff;
+    return dailyService.toggleVideo();
   };
 
   // Flip Camera
@@ -903,9 +900,6 @@ export function App() {
 
   const handleLoginSuccess = (user: User) => {
     setCurrentUser(user);
-    zegoService.init(user.uid, user.name).catch((err) => {
-      console.warn('[ZEGOCLOUD] init on login success warning:', err);
-    });
   };
 
   const handleLogout = async () => {

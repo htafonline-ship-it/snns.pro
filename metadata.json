@@ -1,6 +1,6 @@
 {
   "name": "SNNS",
-  "description": "تطبيق اتصال مرئي وصوتي فائق السرعة عبر ZEGOCLOUD",
+  "description": "تطبيق محادثات واتصال صوتي ومرئي فائق الأمان عبر Daily.co وFirebase",
   "requestFramePermissions": [
     "camera",
     "microphone"

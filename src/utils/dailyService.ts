@@ -1,10 +1,13 @@
 import DailyIframe, { DailyCall } from '@daily-co/daily-js';
+import { auth } from '../lib/firebase';
 
 export interface DailyRoomResponse {
   url: string;
   name: string;
   roomId?: string;
   roomUrl?: string;
+  ROOM_PRIVACY?: string;
+  FIREBASE_BACKEND_AUTH_VERIFIED?: boolean;
 }
 
 export interface DailyTokenResponse {
@@ -12,6 +15,7 @@ export interface DailyTokenResponse {
   roomName: string;
   userId: string;
   TOKEN_CREATED: boolean;
+  FIREBASE_BACKEND_AUTH_VERIFIED?: boolean;
 }
 
 class DailyService {
@@ -25,7 +29,8 @@ class DailyService {
   public onError?: (error: any) => void;
 
   /**
-   * Request backend to create a single Daily Room using DAILY_API_KEY
+   * Request backend to create a single Private Daily Room using DAILY_API_KEY
+   * Attaches Firebase ID Token in Authorization header
    */
   async createRoom(
     callType: 'video' | 'audio',
@@ -33,10 +38,19 @@ class DailyService {
     calleeUid: string
   ): Promise<DailyRoomResponse> {
     console.log('[DAILY] CREATE_ROOM_START', { callType, callerUid, calleeUid });
+
+    const idToken = await auth.currentUser?.getIdToken();
+    if (!idToken) {
+      throw new Error('المستخدم غير مسجل الدخول في Firebase');
+    }
+
     try {
       const res = await fetch('/api/daily/room', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({ callType, callerUid, calleeUid }),
       });
 
@@ -52,7 +66,12 @@ class DailyService {
       }
 
       const data: DailyRoomResponse = await res.json();
-      console.log('[DAILY] ROOM_CREATED = true', data);
+      console.log('[DAILY] ROOM_CREATED = true', {
+        roomName: data.name,
+        roomUrl: data.url,
+        privacy: data.ROOM_PRIVACY || 'private',
+        authVerified: data.FIREBASE_BACKEND_AUTH_VERIFIED,
+      });
       return data;
     } catch (err: any) {
       console.error('[DAILY_ERROR] createRoom exception:', err);
@@ -61,20 +80,28 @@ class DailyService {
   }
 
   /**
-   * Request backend to generate a distinct Daily Meeting Token for a specific user and room
+   * Request backend to generate a distinct Daily Meeting Token for authenticated Firebase user
+   * Attaches Firebase ID Token in Authorization header
    */
   async getMeetingToken(
     roomName: string,
-    userId: string,
     userName: string,
     isOwner: boolean = false
   ): Promise<string> {
-    console.log(`[DAILY_TOKEN] Requesting token for user=${userId} in room=${roomName}`);
+    const idToken = await auth.currentUser?.getIdToken();
+    if (!idToken) {
+      throw new Error('المستخدم غير مسجل الدخول في Firebase');
+    }
+
+    console.log(`[DAILY_TOKEN] Requesting token for room=${roomName} (isOwner=${isOwner})`);
     try {
       const res = await fetch('/api/daily/token', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomName, userId, userName, isOwner }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ roomName, userName, isOwner }),
       });
 
       if (!res.ok) {
@@ -86,7 +113,8 @@ class DailyService {
       const data: DailyTokenResponse = await res.json();
       console.log(`[DAILY_TOKEN] TOKEN_CREATED = true`, {
         roomName: data.roomName,
-        userId: data.userId,
+        verifiedUserId: data.userId,
+        authVerified: data.FIREBASE_BACKEND_AUTH_VERIFIED,
       });
       return data.token;
     } catch (err) {
@@ -103,9 +131,13 @@ class DailyService {
     roomUrl: string,
     userName: string,
     callType: 'video' | 'audio',
-    token?: string
+    token: string
   ): Promise<DailyCall> {
-    console.log('[DAILY] JOIN_START', { roomUrl, userName, callType, hasToken: Boolean(token) });
+    if (!token) {
+      throw new Error('رمز الدخول (Meeting Token) مطلوب لدخول الغرفة الخاصة');
+    }
+
+    console.log('[DAILY] JOIN_START', { roomUrl, userName, callType, hasToken: true });
 
     // Clean up any existing call frame
     await this.leave();
@@ -146,10 +178,20 @@ class DailyService {
         const p = frame.participants();
         const pKeys = Object.keys(p || {});
         const count = pKeys.length;
-        const hasRemote = pKeys.some((k) => k !== 'local');
-        console.log(`[DAILY] ${context} | PARTICIPANT_COUNT = ${count} | REMOTE_PARTICIPANT = ${hasRemote}`);
-      } catch {
-        // ignore
+        const local = p.local;
+        const remoteList = Object.values(p || {}).filter((part: any) => !part.local);
+        const hasRemote = remoteList.length > 0;
+        const remote = remoteList[0];
+
+        console.log(`[DAILY_STATUS] ${context}:`);
+        console.log(`[DAILY_STATUS] LOCAL_SESSION_ID = ${local?.session_id || 'none'}`);
+        console.log(`[DAILY_STATUS] REMOTE_SESSION_ID = ${remote?.session_id || 'none'}`);
+        console.log(`[DAILY_STATUS] PARTICIPANT_COUNT = ${count}`);
+        console.log(`[DAILY_STATUS] REMOTE_PARTICIPANT = ${hasRemote}`);
+        console.log(`[DAILY_STATUS] DAILY_AUDIO = ${Boolean(local?.audio)}`);
+        console.log(`[DAILY_STATUS] DAILY_VIDEO = ${Boolean(local?.video)}`);
+      } catch (err) {
+        console.warn('[DAILY_STATUS_WARN]', err);
       }
     };
 
@@ -166,13 +208,17 @@ class DailyService {
     });
 
     frame.on('participant-joined', (e) => {
-      console.log('[DAILY] PARTICIPANT_JOINED = true', e);
+      console.log('[DAILY] PARTICIPANT_JOINED', e);
       logParticipants('PARTICIPANT_JOINED');
       if (this.onParticipantJoined) this.onParticipantJoined(e);
     });
 
+    frame.on('participant-updated', (e) => {
+      logParticipants('PARTICIPANT_UPDATED');
+    });
+
     frame.on('participant-left', (e) => {
-      console.log('[DAILY] PARTICIPANT_LEFT = true', e);
+      console.log('[DAILY] PARTICIPANT_LEFT', e);
       logParticipants('PARTICIPANT_LEFT');
       if (this.onParticipantLeft) this.onParticipantLeft(e);
     });
@@ -182,18 +228,13 @@ class DailyService {
       if (this.onError) this.onError(e);
     });
 
-    const joinOptions: any = {
+    await frame.join({
       url: roomUrl,
       userName: userName,
       videoSource: callType === 'video',
       audioSource: true,
-    };
-
-    if (token) {
-      joinOptions.token = token;
-    }
-
-    await frame.join(joinOptions);
+      token: token,
+    });
 
     return frame;
   }

@@ -90,13 +90,11 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
         (activeCall.roomUrl ? activeCall.roomUrl.split('/').pop() : '') ||
         '';
 
-      console.log(`[DAILY_DIAGNOSTICS] ${userRole}_ROOM_NAME = ${roomName}`);
-      console.log(`[DAILY_DIAGNOSTICS] SAME_ROOM = true`);
-      console.log('[DAILY] Initializing Daily Prebuilt in VideoCallScreen with roomUrl:', activeCall.roomUrl);
+      console.log(`[DAILY_CALL] Role=${userRole}, RoomName=${roomName}, RoomUrl=${activeCall.roomUrl}`);
 
       dailyService.onJoined = () => {
         if (isMounted) {
-          console.log(`[DAILY_DIAGNOSTICS] ${userRole}_JOINED_DAILY = true`);
+          console.log(`[DAILY_CALL] ${userRole}_JOINED_DAILY = true`);
           setDailyJoined(true);
           setDailyError(null);
         }
@@ -110,7 +108,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
       };
 
       dailyService.onParticipantJoined = (evt) => {
-        console.log(`[DAILY_DIAGNOSTICS] ${userRole}_REMOTE_PARTICIPANT = true`, evt);
+        console.log(`[DAILY_CALL] ${userRole}_REMOTE_PARTICIPANT_EVENT:`, evt);
       };
 
       dailyService.onError = (err) => {
@@ -121,19 +119,33 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
       };
 
       (async () => {
+        if (!roomName) {
+          if (isMounted) setDailyError('اسم الغرفة غير محدد');
+          return;
+        }
+
         let token = '';
-        if (roomName && currentUserId) {
-          try {
-            token = await dailyService.getMeetingToken(
-              roomName,
-              currentUserId,
-              currentUserName,
-              isCaller
-            );
-            console.log(`[DAILY_DIAGNOSTICS] ${userRole}_TOKEN_CREATED = true`);
-          } catch (tokErr) {
-            console.warn(`[DAILY_DIAGNOSTICS] ${userRole}_TOKEN_CREATED = false:`, tokErr);
+        try {
+          token = await dailyService.getMeetingToken(
+            roomName,
+            currentUserName,
+            isCaller
+          );
+          console.log(`[DAILY_CALL] ${userRole}_TOKEN_CREATED = true`);
+        } catch (tokErr: any) {
+          console.error(`[DAILY_CALL] ${userRole}_TOKEN_CREATED = false:`, tokErr);
+          if (isMounted) {
+            setDailyError(tokErr.message || 'فشل في إنشاء رمز الدخول (Meeting Token) للغرفة الخاصة');
           }
+          // Strict stop: do not enter private room without token
+          return;
+        }
+
+        if (!token) {
+          if (isMounted) {
+            setDailyError('فشل في استلام رمز الدخول للغرفة الخاصة');
+          }
+          return;
         }
 
         if (!isMounted || !dailyContainerRef.current) return;
