@@ -186,20 +186,27 @@ async function startServer() {
    * Automatically creates a single Daily Room for Audio/Video calls using DAILY_API_KEY
    */
   app.post('/api/daily/room', async (req, res) => {
+    const apiKey = (process.env.DAILY_API_KEY || '').trim();
+    const isKeyPresent = Boolean(apiKey);
+    const keyLength = apiKey.length;
+
+    console.log(`DAILY_API_KEY_PRESENT = ${isKeyPresent}`);
+    console.log(`DAILY_API_KEY_LENGTH = ${keyLength}`);
+    console.log(`DAILY_CREATE_ROOM_REQUEST = true`);
+
+    if (!isKeyPresent) {
+      console.log('DAILY_ROOM_CREATED = false');
+      console.log('DAILY_RESPONSE_ERROR = DAILY_API_KEY is missing from environment variables');
+      return res.status(400).json({
+        DAILY_API_KEY_PRESENT: false,
+        DAILY_ROOM_CREATED: false,
+        error: 'مفتاح DAILY_API_KEY غير متوفر في متغيرات بيئة الخادم. يرجى إضافته في إعدادات المنصة (Settings).',
+        missingKey: 'DAILY_API_KEY',
+      });
+    }
+
     try {
       const { callType, callerUid, calleeUid, roomId } = req.body;
-      const apiKey = (process.env.DAILY_API_KEY || '').trim();
-
-      console.log(`[DAILY] CREATE_ROOM_REQUEST callType=${callType} caller=${callerUid} callee=${calleeUid}`);
-      console.log(`[DAILY] API_KEY_PRESENT = ${Boolean(apiKey)}`);
-
-      if (!apiKey) {
-        console.error('[DAILY_ERROR] DAILY_API_KEY is not configured in environment variables');
-        return res.status(400).json({
-          error: 'مفتاح DAILY_API_KEY غير متوفر في متغيرات البيئة. يرجى إضافته في إعدادات المنصة (Settings).',
-          missingKey: 'DAILY_API_KEY',
-        });
-      }
 
       // Generate a clean room name
       const randomSuffix = Math.random().toString(36).substring(2, 8);
@@ -207,8 +214,6 @@ async function startServer() {
       const roomName = rawName.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 60);
 
       const isAudioOnly = callType === 'audio';
-
-      console.log(`[DAILY] Requesting room creation from Daily API: name=${roomName}`);
 
       const dailyRes = await fetch('https://api.daily.co/v1/rooms', {
         method: 'POST',
@@ -230,27 +235,46 @@ async function startServer() {
         }),
       });
 
+      console.log(`DAILY_HTTP_STATUS = ${dailyRes.status}`);
+
       const data: any = await dailyRes.json();
 
       if (!dailyRes.ok) {
-        console.error('[DAILY_ERROR] Room creation error from Daily API:', data);
+        const errorMsg = data.error || data.info || JSON.stringify(data);
+        console.log(`DAILY_RESPONSE_ERROR = ${errorMsg}`);
+        console.log(`DAILY_ROOM_CREATED = false`);
+
         return res.status(dailyRes.status).json({
-          error: data.error || data.info || 'فشل في إنشاء غرفة Daily.co',
+          DAILY_API_KEY_PRESENT: true,
+          DAILY_HTTP_STATUS: dailyRes.status,
+          DAILY_RESPONSE_ERROR: errorMsg,
+          DAILY_ROOM_CREATED: false,
+          error: `خطأ Daily [${dailyRes.status}]: ${errorMsg}`,
           details: data,
         });
       }
 
-      console.log(`[DAILY] ROOM_CREATED_SUCCESS = true url=${data.url} name=${data.name}`);
+      console.log(`DAILY_ROOM_CREATED = true`);
+      console.log(`roomName = ${data.name}`);
+      console.log(`roomUrl = ${data.url}`);
+
       return res.json({
+        DAILY_API_KEY_PRESENT: true,
+        DAILY_HTTP_STATUS: 200,
+        DAILY_ROOM_CREATED: true,
+        roomName: data.name,
+        roomUrl: data.url,
         url: data.url,
         name: data.name,
         roomId: data.name,
-        roomUrl: data.url,
       });
     } catch (err: any) {
-      console.error('[DAILY_ERROR] Exception in /api/daily/room:', err);
+      console.log(`DAILY_RESPONSE_ERROR = ${err.message}`);
+      console.log(`DAILY_ROOM_CREATED = false`);
       return res.status(500).json({
-        error: err.message || 'خطأ غير متوقع أثناء إنشاء غرفة Daily',
+        DAILY_API_KEY_PRESENT: true,
+        DAILY_ROOM_CREATED: false,
+        error: `خطأ اتصال الخادم بـ Daily API: ${err.message}`,
       });
     }
   });

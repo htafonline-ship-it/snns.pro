@@ -36,7 +36,12 @@ class DailyService {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         console.error('[DAILY_ERROR] createRoom failed:', data);
-        throw new Error(data.error || 'فشل في إنشاء غرفة Daily.co عبر الخادم');
+        const errMsg =
+          data.error ||
+          data.DAILY_RESPONSE_ERROR ||
+          data.message ||
+          `فشل في إنشاء غرفة Daily.co عبر الخادم (HTTP ${res.status})`;
+        throw new Error(errMsg);
       }
 
       const data: DailyRoomResponse = await res.json();
