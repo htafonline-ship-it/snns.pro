@@ -554,279 +554,219 @@ export const MainScreen: React.FC<MainScreenProps> = ({
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
         
         {/* Tab 1: Contacts Directory + Quick Dial Pad */}
-        {activeTab === 'contacts' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            
-            {/* Left/Middle 8 cols: User Directory */}
-            <div className="lg:col-span-7 xl:col-span-8 space-y-4">
-              
-              {/* Search Bar */}
-              <div className="bg-white p-4 rounded-2xl border border-gray-200/90 shadow-sm flex items-center gap-3">
-                <Search className="w-5 h-5 text-gray-400 shrink-0" />
-                <input
-                  type="text"
-                  id="search-users-input"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="ابحث بالاسم، اسم المستخدم، أو رقم الهاتف..."
-                  className="w-full text-xs sm:text-sm outline-none text-gray-900 placeholder-gray-400 font-semibold bg-transparent"
-                />
-                {searchQuery && (
+    {activeTab === 'contacts' && (
+  <div className="max-w-6xl mx-auto space-y-5">
+
+    {/* Search */}
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-4 flex items-center gap-3">
+      <Search className="w-5 h-5 text-gray-400 shrink-0" />
+
+      <input
+        type="text"
+        id="search-users-input"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="ابحث بالاسم، اسم المستخدم، أو رقم الهاتف..."
+        className="w-full text-sm outline-none text-gray-900 placeholder-gray-400 font-semibold bg-transparent"
+      />
+
+      {searchQuery && (
+        <button
+          type="button"
+          onClick={() => setSearchQuery('')}
+          className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setShowAddContactModal(true)}
+        className="hidden sm:flex shrink-0 items-center gap-2 bg-[#25D366] hover:bg-[#1ebd5e] text-white px-4 py-2.5 rounded-xl text-xs font-bold transition"
+      >
+        <UserPlus className="w-4 h-4" />
+        إضافة جهة اتصال
+      </button>
+    </div>
+
+    {/* Users */}
+    <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-5 sm:p-6">
+
+      <div className="flex items-center justify-between gap-3 mb-5">
+        <div>
+          <h3 className="text-base sm:text-lg font-black text-gray-900 flex items-center gap-2">
+            <Users className="w-5 h-5 text-[#128C7E]" />
+            جهات الاتصال
+          </h3>
+
+          <p className="text-xs text-gray-400 mt-1">
+            اختر المستخدم لبدء رسالة أو مكالمة
+          </p>
+        </div>
+
+        <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 text-[#128C7E] text-[11px] font-bold">
+          <span className="w-2 h-2 rounded-full bg-[#25D366]" />
+          {onlineUids.length} متصل الآن
+        </span>
+      </div>
+
+      {loadingUsers ? (
+        <div className="py-20 text-center text-gray-400 text-xs flex flex-col items-center">
+          <span className="w-8 h-8 border-2 border-[#128C7E]/30 border-t-[#128C7E] rounded-full animate-spin mb-3" />
+          <span>جاري تحميل جهات الاتصال...</span>
+        </div>
+      ) : visibleUsers.length === 0 ? (
+        <div className="py-20 text-center flex flex-col items-center">
+          <div className="w-16 h-16 rounded-2xl bg-gray-50 flex items-center justify-center mb-4">
+            <Users className="w-8 h-8 text-gray-300" />
+          </div>
+
+          <h4 className="font-bold text-gray-800 mb-1">
+            لا توجد جهات اتصال
+          </h4>
+
+          <p className="text-xs text-gray-400 mb-5">
+            أضف مستخدمًا للبدء بالتواصل
+          </p>
+
+          <button
+            type="button"
+            onClick={() => setShowAddContactModal(true)}
+            className="px-5 py-2.5 bg-[#128C7E] text-white rounded-xl font-bold text-xs hover:bg-[#0e6b60] transition"
+          >
+            إضافة جهة اتصال
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {visibleUsers.map((user) => {
+            const isOnline = isUserOnline(user);
+            const isLocked = Boolean(user.isCallLocked);
+
+            return (
+              <div
+                key={user.uid}
+                className="group rounded-2xl border border-gray-100 bg-gray-50/70 hover:bg-white hover:border-emerald-200 hover:shadow-lg hover:shadow-gray-100 transition-all duration-200 p-4"
+              >
+                {/* User info */}
+                <div className="flex items-center gap-3">
+                  <div className="relative shrink-0">
+
+                    <div
+                      className={`w-14 h-14 rounded-2xl ${
+                        user.avatarColor || 'bg-emerald-600'
+                      } flex items-center justify-center text-white text-xl font-black shadow-sm`}
+                    >
+                      {user.name.charAt(0)}
+                    </div>
+
+                    <span
+                      className={`absolute -bottom-1 -left-1 w-4 h-4 rounded-full border-[3px] border-white ${
+                        isOnline ? 'bg-[#25D366]' : 'bg-gray-400'
+                      }`}
+                    />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-black text-sm text-gray-900 truncate">
+                        {user.name}
+                      </h4>
+
+                      {isLocked && (
+                        <Lock className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                      )}
+                    </div>
+
+                    {user.username && (
+                      <p
+                        className="text-xs font-bold text-[#128C7E] truncate"
+                        dir="ltr"
+                      >
+                        @{user.username}
+                      </p>
+                    )}
+
+                    {user.phone && (
+                      <p
+                        className="text-[11px] text-gray-400 font-mono truncate mt-0.5"
+                        dir="ltr"
+                      >
+                        {user.phone}
+                      </p>
+                    )}
+                  </div>
+
+                  <span
+                    className={`shrink-0 text-[10px] px-2.5 py-1 rounded-full font-bold ${
+                      isOnline
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-gray-100 text-gray-500'
+                    }`}
+                  >
+                    {isOnline ? 'متصل' : 'غير متصل'}
+                  </span>
+                </div>
+
+                {/* Actions */}
+                <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-gray-200/70">
+
                   <button
                     type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="p-1 text-gray-400 hover:text-gray-600 rounded-lg"
+                    id={`chat-user-${user.uid}`}
+                    onClick={() => {
+                      setChatTargetUser(user);
+                      setActiveTab('chats');
+                    }}
+                    className="h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
                   >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* Users List Grid */}
-              <div className="bg-white rounded-3xl border border-gray-200/90 shadow-sm p-4 sm:p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
-                    <Users className="w-4 h-4 text-[#128C7E]" />
-                    <span>المستخدمون المتاحون للاتصال</span>
-                  </h3>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-[#128C7E] text-[11px] font-bold">
-                      <span className="w-2 h-2 rounded-full bg-[#25D366] animate-pulse" />
-                      <span>{onlineUids.length} متصل الآن</span>
-                    </span>
-                  </div>
-                </div>
-
-                {loadingUsers ? (
-                  <div className="py-16 text-center text-gray-400 text-xs flex flex-col items-center">
-                    <span className="w-8 h-8 border-2 border-[#128C7E]/30 border-t-[#128C7E] rounded-full animate-spin mb-3" />
-                    <span>جاري تحميل جهات الاتصال من Firestore...</span>
-                  </div>
-                ) : visibleUsers.length === 0 ? (
-                  <div className="py-16 text-center text-gray-400 text-xs flex flex-col items-center">
-                    <Users className="w-12 h-12 text-gray-300 mb-3" />
-                    <p className="font-bold text-gray-600 text-sm mb-1">لا توجد جهات اتصال مطابقة</p>
-                    <p className="text-gray-400 max-w-xs mb-4">
-                      يمكنك دعوة أصدقائك أو الاتصال بأي رقم مباشرة عبر لوحة الاتصال السريع.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setShowAddContactModal(true)}
-                      className="px-4 py-2 bg-[#128C7E] text-white rounded-xl font-bold text-xs hover:bg-[#0e6b60] transition"
-                    >
-                      إضافة جهة اتصال الآن
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    {visibleUsers.map((user) => {
-                      const isOnline = isUserOnline(user);
-                      const isLocked = Boolean(user.isCallLocked);
-
-                      return (
-                        <div
-                          key={user.uid}
-                          className="p-4 rounded-2xl border border-gray-100 bg-gray-50/60 hover:bg-white hover:border-[#25D366]/40 hover:shadow-md transition duration-200 flex flex-col justify-between"
-                        >
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                              <div className="relative">
-                                <div className={`w-12 h-12 rounded-2xl ${user.avatarColor || 'bg-emerald-600'} flex items-center justify-center text-white text-lg font-bold shadow-sm`}>
-                                  {user.name.charAt(0)}
-                                </div>
-                                <span
-                                  className={`absolute -bottom-0.5 -left-0.5 w-3.5 h-3.5 rounded-full border-2 border-white ${
-                                    isOnline ? 'bg-[#25D366]' : 'bg-gray-400'
-                                  }`}
-                                  title={isOnline ? 'متصل الآن' : 'غير متصل'}
-                                />
-                              </div>
-
-                              <div>
-                                <h4 className="font-bold text-sm text-gray-900 flex items-center gap-1.5">
-                                  <span>{user.name}</span>
-                                  {isLocked && (
-                                    <span className="p-0.5 rounded bg-rose-100 text-rose-600" title="إقفال الاتصال مفعّل">
-                                      <Lock className="w-3 h-3" />
-                                    </span>
-                                  )}
-                                </h4>
-                                
-                                {user.username && (
-                                  <p className="text-xs font-bold text-[#128C7E]" dir="ltr">
-                                    @{user.username}
-                                  </p>
-                                )}
-
-                                <p className="text-[11px] text-gray-500 font-mono" dir="ltr">
-                                  {user.phone}
-                                </p>
-                              </div>
-                            </div>
-
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                              isOnline ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-600'
-                            }`}>
-                              {isOnline ? 'متصل' : 'غير متصل'}
-                            </span>
-                          </div>
-
-                          {/* Action Buttons: Chat, Video, Audio */}
-                          <div className="flex items-center gap-2 pt-3 border-t border-gray-200/60">
-                            <button
-                              type="button"
-                              id={`chat-user-${user.uid}`}
-                              onClick={() => {
-                                setChatTargetUser(user);
-                                setActiveTab('chats');
-                              }}
-                              className="px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95"
-                              title="إرسال رسالة مباشرة"
-                            >
-                              <MessageSquare className="w-3.5 h-3.5 text-[#128C7E]" />
-                              <span>مراسلة</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              id={`call-video-${user.uid}`}
-                              onClick={() => handleInitiateCall(user, 'video')}
-                              className="flex-1 bg-[#25D366] hover:bg-[#1ebd5e] text-white py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-green-100 transition active:scale-95"
-                            >
-                              <Video className="w-3.5 h-3.5" />
-                              <span>فيديو</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              id={`call-audio-${user.uid}`}
-                              onClick={() => handleInitiateCall(user, 'audio')}
-                              className="flex-1 bg-[#128C7E] hover:bg-[#0f7267] text-white py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-teal-100 transition active:scale-95"
-                            >
-                              <Phone className="w-3.5 h-3.5" />
-                              <span>صوتي</span>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-            </div>
-
-            {/* Right 5 cols: WhatsApp-style Dial Pad & Quick Call */}
-            <div className="lg:col-span-5 xl:col-span-4 space-y-4">
-              
-              {/* Dial Pad Card */}
-              <div className="bg-white rounded-3xl border border-gray-200/90 shadow-sm p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                    <PhoneCall className="w-4 h-4 text-[#128C7E]" />
-                    <span>لوحة الاتصال السريع</span>
-                  </h3>
-                  <span className="text-[10px] text-gray-400 font-bold">رقم أو اسم مستخدم</span>
-                </div>
-
-                {/* Dial Input Display */}
-                <div className="relative mb-4">
-                  <input
-                    type="text"
-                    id="direct-dial-input"
-                    dir="ltr"
-                    value={dialNumber}
-                    onChange={(e) => setDialNumber(e.target.value)}
-                    placeholder="05XXXXXXXX أو المعرف"
-                    className="w-full bg-gray-50 border border-gray-200 rounded-2xl py-3 px-4 text-center font-mono text-base font-bold text-gray-900 outline-none focus:ring-2 focus:ring-[#25D366] focus:border-transparent tracking-wider"
-                  />
-                  {dialNumber && (
-                    <button
-                      type="button"
-                      onClick={handleDialDelete}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-rose-500 rounded-lg transition"
-                      title="مسح"
-                    >
-                      <Delete className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Numeric Dial Pad Grid */}
-                <div className="grid grid-cols-3 gap-2.5 mb-5">
-                  {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((digit) => (
-                    <button
-                      key={digit}
-                      type="button"
-                      onClick={() => handleDialClick(digit)}
-                      className="py-3 rounded-2xl bg-gray-50 hover:bg-gray-100 active:bg-emerald-50 active:text-[#128C7E] border border-gray-200/80 text-base font-bold font-mono text-gray-800 transition duration-100 flex flex-col items-center justify-center shadow-xs"
-                    >
-                      {digit}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Big Action Call Buttons */}
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    id="dial-pad-video-btn"
-                    disabled={!dialNumber.trim()}
-                    onClick={() => handleDialCall('video')}
-                    className="w-full bg-[#25D366] hover:bg-[#1ebd5e] disabled:opacity-40 disabled:cursor-not-allowed text-white py-3.5 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-green-200/80 transition active:scale-95"
-                  >
-                    <Video className="w-4 h-4" />
-                    <span>مكالمة فيديو</span>
+                    <MessageSquare className="w-4 h-4 text-[#128C7E]" />
+                    رسالة
                   </button>
 
                   <button
                     type="button"
-                    id="dial-pad-audio-btn"
-                    disabled={!dialNumber.trim()}
-                    onClick={() => handleDialCall('audio')}
-                    className="w-full bg-[#128C7E] hover:bg-[#0f7267] disabled:opacity-40 disabled:cursor-not-allowed text-white py-3.5 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-teal-200/80 transition active:scale-95"
+                    id={`call-audio-${user.uid}`}
+                    onClick={() => handleInitiateCall(user, 'audio')}
+                    disabled={isLocked}
+                    className="h-10 rounded-xl bg-[#128C7E] hover:bg-[#0e7166] disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
                   >
                     <Phone className="w-4 h-4" />
-                    <span>مكالمة صوتية</span>
+                    صوتي
                   </button>
-                </div>
-              </div>
 
-              {/* Share & Connect Card */}
-              <div className="bg-gradient-to-br from-emerald-600 to-[#128C7E] rounded-3xl p-5 text-white shadow-lg relative overflow-hidden">
-                <div className="relative z-10">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Sparkles className="w-4 h-4 text-emerald-200" />
-                    <h4 className="font-bold text-sm">الاتصال بين جهازين حقيقيين</h4>
-                  </div>
-                  <p className="text-xs text-white/90 leading-relaxed mb-4">
-                    افتح الرابط في جهاز أو متصفح آخر وسجل بحساب مختلف لتجربة مكالمة فيديو حية مباشرة عبر ZEGOCLOUD!
-                  </p>
                   <button
                     type="button"
-                    onClick={copyAppUrl}
-                    className="w-full bg-white text-[#128C7E] hover:bg-emerald-50 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow transition"
+                    id={`call-video-${user.uid}`}
+                    onClick={() => handleInitiateCall(user, 'video')}
+                    disabled={isLocked}
+                    className="h-10 rounded-xl bg-[#25D366] hover:bg-[#1fbd5c] disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
                   >
-                    {copiedLink ? (
-                      <>
-                        <Check className="w-4 h-4 text-emerald-600" />
-                        <span>تم نسخ الرابط بنجاح!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        <span>نسخ رابط التطبيق لفتحه في جهاز آخر</span>
-                      </>
-                    )}
+                    <Video className="w-4 h-4" />
+                    فيديو
                   </button>
+
                 </div>
               </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
 
-            </div>
+    {/* Mobile add button */}
+    <button
+      type="button"
+      onClick={() => setShowAddContactModal(true)}
+      className="sm:hidden w-full bg-[#25D366] text-white py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2"
+    >
+      <UserPlus className="w-4 h-4" />
+      إضافة جهة اتصال
+    </button>
 
-          </div>
-        )}
-
+  </div>
+)}
         {/* Tab 2: Direct Messages (المحادثات النصية الحقيقية) */}
         {activeTab === 'chats' && (
           <div className="animate-in fade-in duration-200">

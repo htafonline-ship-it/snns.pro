@@ -129,13 +129,14 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
           token = await dailyService.getMeetingToken(
             roomName,
             currentUserName,
-            isCaller
+            isCaller,
+            currentUserId
           );
           console.log(`[DAILY_CALL] ${userRole}_TOKEN_CREATED = true`);
         } catch (tokErr: any) {
           console.error(`[DAILY_CALL] ${userRole}_TOKEN_CREATED = false:`, tokErr);
           if (isMounted) {
-            setDailyError(tokErr.message || 'فشل في إنشاء رمز الدخول (Meeting Token) للغرفة الخاصة');
+            setDailyError(tokErr.message || 'خطأ في إنشاء رمز Meeting Token');
           }
           // Strict stop: do not enter private room without token
           return;

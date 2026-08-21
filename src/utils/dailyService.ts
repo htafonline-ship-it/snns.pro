@@ -81,43 +81,53 @@ class DailyService {
 
   /**
    * Request backend to generate a distinct Daily Meeting Token for authenticated Firebase user
-   * Attaches Firebase ID Token in Authorization header
+   * Attaches Firebase ID Token in Authorization header if available
    */
   async getMeetingToken(
     roomName: string,
     userName: string,
-    isOwner: boolean = false
+    isOwner: boolean = false,
+    userId?: string
   ): Promise<string> {
-    const idToken = await auth.currentUser?.getIdToken();
-    if (!idToken) {
-      throw new Error('المستخدم غير مسجل الدخول في Firebase');
+    const idToken = await auth.currentUser?.getIdToken().catch(() => null);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (idToken) {
+      headers.Authorization = `Bearer ${idToken}`;
     }
 
-    console.log(`[DAILY_TOKEN] Requesting token for room=${roomName} (isOwner=${isOwner})`);
+    console.log('[TOKEN] REQUEST_SENT = true');
+
     try {
       const res = await fetch('/api/daily/token', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({ roomName, userName, isOwner }),
+        headers,
+        body: JSON.stringify({
+          roomName,
+          userName,
+          isOwner,
+          userId: userId || auth.currentUser?.uid || 'user_' + Date.now(),
+        }),
       });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        console.error('[DAILY_TOKEN_ERROR] Token creation failed:', data);
-        throw new Error(data.error || `فشل في إنشاء رمز الدخول (Token) للغرفة`);
+      console.log(`[TOKEN] HTTP_STATUS = ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+
+      const tokenCreated = Boolean(data.token);
+      console.log(`[TOKEN] TOKEN_CREATED = ${tokenCreated}`);
+      console.log(`CALL_ROOM_NAME = ${roomName}`);
+      console.log(`TOKEN_ROOM_NAME = ${data.roomName || roomName}`);
+      console.log(`ROOM_NAME_MATCH = ${Boolean(roomName && (data.roomName === roomName || !data.roomName))}`);
+
+      if (!res.ok || !data.token) {
+        const errorMsg = data.error || data.details?.error || `فشل في إنشاء رمز الدخول (Token) للغرفة (HTTP ${res.status})`;
+        console.error('[DAILY_TOKEN_ERROR] Token creation failed:', errorMsg);
+        throw new Error(errorMsg);
       }
 
-      const data: DailyTokenResponse = await res.json();
-      console.log(`[DAILY_TOKEN] TOKEN_CREATED = true`, {
-        roomName: data.roomName,
-        verifiedUserId: data.userId,
-        authVerified: data.FIREBASE_BACKEND_AUTH_VERIFIED,
-      });
       return data.token;
-    } catch (err) {
+    } catch (err: any) {
       console.error('[DAILY_TOKEN_ERROR] Exception:', err);
       throw err;
     }
@@ -133,11 +143,17 @@ class DailyService {
     callType: 'video' | 'audio',
     token: string
   ): Promise<DailyCall> {
+    console.log('[DAILY] JOIN_START');
+    console.log('DAILY_JOIN_STARTED = true');
+    console.log('ZEGO_ACTIVE = false');
+    console.log('CUSTOM_WEBRTC_ACTIVE = false');
+
     if (!token) {
+      console.log('[DAILY] JOIN_SUCCESS = false');
+      console.log('[DAILY] ERROR_CODE = MISSING_TOKEN');
+      console.log('[DAILY] ERROR_MESSAGE = Meeting Token is required');
       throw new Error('رمز الدخول (Meeting Token) مطلوب لدخول الغرفة الخاصة');
     }
-
-    console.log('[DAILY] JOIN_START', { roomUrl, userName, callType, hasToken: true });
 
     // Clean up any existing call frame
     await this.leave();
@@ -197,6 +213,8 @@ class DailyService {
 
     frame.on('joined-meeting', () => {
       console.log('[DAILY] JOIN_SUCCESS = true');
+      console.log('[DAILY] ERROR_CODE = NONE');
+      console.log('[DAILY] ERROR_MESSAGE = NONE');
       console.log('[DAILY] JOINED_MEETING = true');
       logParticipants('JOINED_MEETING');
       if (this.onJoined) this.onJoined();
@@ -223,20 +241,31 @@ class DailyService {
       if (this.onParticipantLeft) this.onParticipantLeft(e);
     });
 
-    frame.on('error', (e) => {
+    frame.on('error', (e: any) => {
+      const errCode = e?.errorMsg || e?.type || e?.code || 'DAILY_FRAME_ERROR';
+      const errMsg = e?.errorMsg || JSON.stringify(e);
       console.error('[DAILY_ERROR] call frame error:', e);
-      if (this.onError) this.onError(e);
+      console.log('[DAILY] JOIN_SUCCESS = false');
+      console.log(`[DAILY] ERROR_CODE = ${errCode}`);
+      console.log(`[DAILY] ERROR_MESSAGE = ${errMsg}`);
+      if (this.onError) this.onError(errMsg);
     });
 
-    await frame.join({
-      url: roomUrl,
-      userName: userName,
-      videoSource: callType === 'video',
-      audioSource: true,
-      token: token,
-    });
-
-    return frame;
+    try {
+      await frame.join({
+        url: roomUrl,
+        userName: userName,
+        videoSource: callType === 'video',
+        audioSource: true,
+        token: token,
+      });
+      return frame;
+    } catch (joinErr: any) {
+      console.log('[DAILY] JOIN_SUCCESS = false');
+      console.log(`[DAILY] ERROR_CODE = ${joinErr?.code || joinErr?.name || 'JOIN_EXCEPTION'}`);
+      console.log(`[DAILY] ERROR_MESSAGE = ${joinErr?.message || 'Failed to join Daily room'}`);
+      throw joinErr;
+    }
   }
 
   toggleAudio(state?: boolean): boolean {

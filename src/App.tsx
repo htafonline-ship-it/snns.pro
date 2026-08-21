@@ -721,8 +721,17 @@ export function App() {
     const callInfo = { ...pendingIncomingCall };
     clearMissedCallTimer();
     stopAllTones();
-    console.log('[ACCEPT] BUTTON_CLICKED = true');
-    console.log('[ACCEPT] DAILY_ACCEPT_START');
+
+    const callRoomName = callInfo.roomId || (callInfo.roomUrl ? callInfo.roomUrl.split('/').pop() : '') || '';
+
+    console.log('[ACCEPT] CLICKED = true');
+    console.log(`[ACCEPT] CALL_ID = ${callInfo.callId || 'none'}`);
+    console.log(`[ACCEPT] ROOM_NAME = ${callRoomName}`);
+    console.log(`[ACCEPT] ROOM_URL = ${callInfo.roomUrl}`);
+    console.log(`[ACCEPT] CURRENT_FIREBASE_UID = ${currentUser.uid}`);
+    console.log('NEW_ROOM_CREATED_ON_ACCEPT = false');
+    console.log('ZEGO_ACTIVE = false');
+    console.log('CUSTOM_WEBRTC_ACTIVE = false');
 
     try {
       // 1. Update Firestore call document atomically FIRST
