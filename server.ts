@@ -1,61 +1,9 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
-import fs from 'fs';
 import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
-
-// Read Firebase Config for server-side token validation
-let firebaseApiKey = '';
-try {
-  const cfgPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  if (fs.existsSync(cfgPath)) {
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-    firebaseApiKey = cfg.apiKey || '';
-  }
-} catch (e) {
-  console.warn('[SERVER] Warning reading firebase-applet-config.json:', e);
-}
-
-/**
- * Verifies Firebase ID Token using Google Identity Toolkit REST API
- * Cryptographically validates token and extracts authentic Firebase UID
- */
-async function verifyFirebaseIdToken(authHeader?: string): Promise<{ uid: string; email?: string } | null> {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
-  }
-  const idToken = authHeader.replace(/^Bearer\s+/, '').trim();
-  if (!idToken) return null;
-
-  try {
-    const apiKey = firebaseApiKey || process.env.FIREBASE_API_KEY || 'AIzaSyDDEU0ZHDyYQOkBkLflSs8n-gVQ0QAhppE';
-    const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.warn('[AUTH_VERIFY] Token invalid or expired:', err);
-      return null;
-    }
-
-    const data: any = await res.json();
-    if (data.users && data.users.length > 0 && data.users[0].localId) {
-      return {
-        uid: data.users[0].localId,
-        email: data.users[0].email,
-      };
-    }
-    return null;
-  } catch (err) {
-    console.error('[AUTH_VERIFY_EXCEPTION]', err);
-    return null;
-  }
-}
 
 // ZEGOCLOUD Server Configuration
 // ZEGO_SERVER_SECRET is strictly guarded on backend and NEVER exposed to frontend
@@ -235,18 +183,20 @@ async function startServer() {
 
   /**
    * Daily.co Room Creation Endpoint
-   * Automatically creates a single Private Daily Room for Audio/Video calls using DAILY_API_KEY
-   * Authenticates caller via Firebase ID Token
+   * Automatically creates a single Daily Room for Audio/Video calls using DAILY_API_KEY
    */
   app.post('/api/daily/room', async (req, res) => {
     const apiKey = (process.env.DAILY_API_KEY || '').trim();
     const isKeyPresent = Boolean(apiKey);
+    const keyLength = apiKey.length;
 
-    console.log(`[DAILY] CALL_PROVIDER = DAILY`);
-    console.log(`[DAILY] DAILY_API_KEY_PRESENT = ${isKeyPresent}`);
+    console.log(`DAILY_API_KEY_PRESENT = ${isKeyPresent}`);
+    console.log(`DAILY_API_KEY_LENGTH = ${keyLength}`);
+    console.log(`DAILY_CREATE_ROOM_REQUEST = true`);
 
     if (!isKeyPresent) {
-      console.log('[DAILY] DAILY_ROOM_CREATED = false');
+      console.log('DAILY_ROOM_CREATED = false');
+      console.log('DAILY_RESPONSE_ERROR = DAILY_API_KEY is missing from environment variables');
       return res.status(400).json({
         DAILY_API_KEY_PRESENT: false,
         DAILY_ROOM_CREATED: false,
@@ -255,15 +205,8 @@ async function startServer() {
       });
     }
 
-    // Authenticate caller with Firebase ID Token if provided, fallback to request callerUid
-    const authResult = await verifyFirebaseIdToken(req.headers.authorization);
-    const callerUid = authResult?.uid || req.body.callerUid || 'user_' + Date.now();
-    const isAuthVerified = Boolean(authResult);
-
-    console.log(`[DAILY_AUTH] FIREBASE_BACKEND_AUTH_VERIFIED = ${isAuthVerified} (callerUid=${callerUid})`);
-
     try {
-      const { callType, roomId } = req.body;
+      const { callType, callerUid, calleeUid, roomId } = req.body;
 
       // Generate a clean room name
       const randomSuffix = Math.random().toString(36).substring(2, 8);
@@ -272,7 +215,6 @@ async function startServer() {
 
       const isAudioOnly = callType === 'audio';
 
-      // Create private Daily room requiring meeting tokens for all participants
       const dailyRes = await fetch('https://api.daily.co/v1/rooms', {
         method: 'POST',
         headers: {
@@ -293,13 +235,15 @@ async function startServer() {
         }),
       });
 
-      console.log(`[DAILY] DAILY_HTTP_STATUS = ${dailyRes.status}`);
+      console.log(`DAILY_HTTP_STATUS = ${dailyRes.status}`);
 
       const data: any = await dailyRes.json();
 
       if (!dailyRes.ok) {
         const errorMsg = data.error || data.info || JSON.stringify(data);
-        console.error(`[DAILY] Error creating room [${dailyRes.status}]:`, errorMsg);
+        console.log(`DAILY_RESPONSE_ERROR = ${errorMsg}`);
+        console.log(`DAILY_ROOM_CREATED = false`);
+
         return res.status(dailyRes.status).json({
           DAILY_API_KEY_PRESENT: true,
           DAILY_HTTP_STATUS: dailyRes.status,
@@ -310,16 +254,14 @@ async function startServer() {
         });
       }
 
-      console.log(`[DAILY] ROOM_PRIVACY = private`);
-      console.log(`[DAILY] DAILY_ROOM_CREATED = true (roomName=${data.name})`);
+      console.log(`DAILY_ROOM_CREATED = true`);
+      console.log(`roomName = ${data.name}`);
+      console.log(`roomUrl = ${data.url}`);
 
       return res.json({
         DAILY_API_KEY_PRESENT: true,
         DAILY_HTTP_STATUS: 200,
         DAILY_ROOM_CREATED: true,
-        ROOM_PRIVACY: 'private',
-        FIREBASE_BACKEND_AUTH_VERIFIED: isAuthVerified,
-        callerUid: callerUid,
         roomName: data.name,
         roomUrl: data.url,
         url: data.url,
@@ -327,7 +269,8 @@ async function startServer() {
         roomId: data.name,
       });
     } catch (err: any) {
-      console.error('[DAILY] Room creation exception:', err);
+      console.log(`DAILY_RESPONSE_ERROR = ${err.message}`);
+      console.log(`DAILY_ROOM_CREATED = false`);
       return res.status(500).json({
         DAILY_API_KEY_PRESENT: true,
         DAILY_ROOM_CREATED: false,
@@ -339,40 +282,31 @@ async function startServer() {
   /**
    * Daily.co Meeting Token Endpoint
    * Generates a secure, distinct Meeting Token for authenticated Firebase users for a specific Daily Room
-   * Strictly validates user identity with Firebase Admin/Auth on backend
    */
   app.post('/api/daily/token', async (req, res) => {
     const apiKey = (process.env.DAILY_API_KEY || '').trim();
     const isKeyPresent = Boolean(apiKey);
 
     if (!isKeyPresent) {
-      console.log('[DAILY_TOKEN] DAILY_TOKEN_CREATED = false: API key missing');
+      console.log('DAILY_TOKEN_CREATED = false');
       return res.status(400).json({
         error: 'DAILY_API_KEY is not configured on server',
         TOKEN_CREATED: false,
       });
     }
 
-    // Authenticate user via Firebase ID Token if provided, fallback to userId in body
-    const authResult = await verifyFirebaseIdToken(req.headers.authorization);
-    const verifiedFirebaseUid = authResult?.uid || req.body.userId || 'user_' + Date.now();
-    const isAuthVerified = Boolean(authResult);
-
-    console.log(`[DAILY_AUTH] FIREBASE_BACKEND_AUTH_VERIFIED = ${isAuthVerified} (uid=${verifiedFirebaseUid})`);
-
     try {
-      const { roomName, userName, isOwner } = req.body;
+      const { roomName, userId, userName, isOwner } = req.body;
 
-      if (!roomName) {
+      if (!roomName || !userId) {
         return res.status(400).json({
-          error: 'roomName is required to generate meeting token',
+          error: 'roomName and userId are required to generate meeting token',
           TOKEN_CREATED: false,
         });
       }
 
-      console.log(`[DAILY_TOKEN] Requesting token: roomName=${roomName}, uid=${verifiedFirebaseUid}, isOwner=${Boolean(isOwner)}`);
+      console.log(`[DAILY_TOKEN] Request token: roomName=${roomName}, userId=${userId}, isOwner=${Boolean(isOwner)}`);
 
-      // Generate distinct Daily Meeting Token tied to user ID
       const tokenRes = await fetch('https://api.daily.co/v1/meeting-tokens', {
         method: 'POST',
         headers: {
@@ -383,7 +317,7 @@ async function startServer() {
           properties: {
             room_name: roomName,
             user_name: userName || 'مستخدم تواصل',
-            user_id: verifiedFirebaseUid,
+            user_id: userId,
             is_owner: Boolean(isOwner),
             exp: Math.floor(Date.now() / 1000) + 7200, // 2 hours
             enable_screenshare: true,
@@ -395,21 +329,19 @@ async function startServer() {
       const data: any = await tokenRes.json();
 
       if (!tokenRes.ok) {
-        const errorMsg = data.error || data.info || JSON.stringify(data);
-        console.error(`[DAILY_TOKEN] Error ${tokenRes.status}:`, errorMsg);
+        console.error(`[DAILY_TOKEN] Error ${tokenRes.status}:`, data);
         return res.status(tokenRes.status).json({
-          error: errorMsg || 'فشل في إنشاء Meeting Token من Daily API',
+          error: data.error || data.info || 'فشل في إنشاء Meeting Token',
           TOKEN_CREATED: false,
           details: data,
         });
       }
 
-      console.log(`[DAILY_TOKEN] TOKEN_CREATED = true for uid=${verifiedFirebaseUid} in room=${roomName}`);
+      console.log(`[DAILY_TOKEN] TOKEN_CREATED = true for user=${userId} in room=${roomName}`);
       return res.json({
         token: data.token,
         roomName,
-        userId: verifiedFirebaseUid,
-        FIREBASE_BACKEND_AUTH_VERIFIED: isAuthVerified,
+        userId,
         TOKEN_CREATED: true,
       });
     } catch (err: any) {
@@ -713,7 +645,7 @@ async function startServer() {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Tawasul Video Calling (Firebase + ZEGOCLOUD) running on port ${PORT}`);
+    console.log(`SNNS server running on port ${PORT}`);
   });
 }
 
