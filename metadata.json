@@ -1,0 +1,11 @@
+{
+  "name": "SNNS",
+  "description": "تطبيق اتصال مرئي وصوتي فائق السرعة عبر ZEGOCLOUD",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId && request.resource.data.uid == userId;
+      allow update: if isAuthenticated();
+      allow delete: if isOwner(userId);
+    }
+
+    // Contacts Collection
+    match /contacts/{contactId} {
+      allow read: if isAuthenticated() && resource.data.owner_uid == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.owner_uid == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.owner_uid == request.auth.uid;
+    }
+
+    // Calls Collection
+    match /calls/{callId} {
+      allow read: if isAuthenticated() && (resource.data.caller_id == request.auth.uid || resource.data.callee_id == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.caller_id == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.caller_id == request.auth.uid || resource.data.callee_id == request.auth.uid);
+      allow delete: if isAuthenticated() && (resource.data.caller_id == request.auth.uid || resource.data.callee_id == request.auth.uid);
+    }
+
+    // Direct Messages Collection
+    match /direct_messages/{messageId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.sender_id == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (resource.data.sender_id == request.auth.uid || resource.data.receiver_id == request.auth.uid);
+    }
+
+    // Blocked Users Collection
+    match /blocks/{blockId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated();
+    }
+  }
+}

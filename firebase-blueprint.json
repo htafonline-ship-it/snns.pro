@@ -1,0 +1,88 @@
+{
+  "entities": {
+    "UserProfile": {
+      "collection": "users",
+      "fields": {
+        "uid": { "type": "string", "description": "Firebase Auth UID matching document ID" },
+        "display_name": { "type": "string", "description": "User display name" },
+        "username": { "type": "string", "description": "Unique username tag" },
+        "phone": { "type": "string", "description": "Registered phone number" },
+        "photo_url": { "type": "string", "description": "Profile picture URL" },
+        "role": { "type": "string", "description": "Role: admin or user" },
+        "created_at": { "type": "number", "description": "Creation timestamp in ms" },
+        "last_seen": { "type": "number", "description": "Last activity timestamp in ms" },
+        "status": { "type": "string", "description": "Online, offline, or in_call status" },
+        "is_stealth": { "type": "boolean", "description": "Stealth mode status" },
+        "is_call_locked": { "type": "boolean", "description": "Do-not-disturb / Call lock" },
+        "avatar_color": { "type": "string", "description": "Color class for avatar" }
+      },
+      "rules": {
+        "read": "request.auth != null",
+        "create": "request.auth != null && request.auth.uid == request.resource.data.uid",
+        "update": "request.auth != null && request.auth.uid == resource.data.uid",
+        "delete": "request.auth != null && request.auth.uid == resource.data.uid"
+      }
+    },
+    "Contact": {
+      "collection": "contacts",
+      "fields": {
+        "id": { "type": "string", "description": "Contact relationship ID" },
+        "owner_uid": { "type": "string", "description": "Firebase Auth UID of the owner" },
+        "contact_uid": { "type": "string", "description": "Firebase Auth UID of the contact" },
+        "name": { "type": "string", "description": "Saved name" },
+        "phone": { "type": "string", "description": "Contact phone" },
+        "username": { "type": "string", "description": "Contact username" },
+        "created_at": { "type": "number", "description": "Timestamp created" }
+      },
+      "rules": {
+        "read": "request.auth != null && resource.data.owner_uid == request.auth.uid",
+        "create": "request.auth != null && request.resource.data.owner_uid == request.auth.uid",
+        "update": "request.auth != null && resource.data.owner_uid == request.auth.uid",
+        "delete": "request.auth != null && resource.data.owner_uid == request.auth.uid"
+      }
+    },
+    "CallRecord": {
+      "collection": "calls",
+      "fields": {
+        "id": { "type": "string", "description": "Unique call ID" },
+        "caller_id": { "type": "string", "description": "Firebase Auth UID of the caller" },
+        "callee_id": { "type": "string", "description": "Firebase Auth UID of the recipient" },
+        "caller_name": { "type": "string", "description": "Name of caller" },
+        "callee_name": { "type": "string", "description": "Name of recipient" },
+        "call_type": { "type": "string", "description": "video or audio" },
+        "status": { "type": "string", "description": "ringing, accepted, rejected, cancelled, missed, ended, failed" },
+        "created_at": { "type": "number", "description": "Call initiation timestamp" },
+        "started_at": { "type": "number", "description": "Timestamp when call connected" },
+        "answered_at": { "type": "number", "description": "Timestamp when call answered" },
+        "ended_at": { "type": "number", "description": "Timestamp when call ended" },
+        "duration": { "type": "number", "description": "Call duration in seconds" }
+      },
+      "rules": {
+        "read": "request.auth != null && (resource.data.caller_id == request.auth.uid || resource.data.callee_id == request.auth.uid)",
+        "create": "request.auth != null && request.resource.data.caller_id == request.auth.uid",
+        "update": "request.auth != null && (resource.data.caller_id == request.auth.uid || resource.data.callee_id == request.auth.uid)",
+        "delete": "request.auth != null && (resource.data.caller_id == request.auth.uid || resource.data.callee_id == request.auth.uid)"
+      }
+    },
+    "DirectMessage": {
+      "collection": "direct_messages",
+      "fields": {
+        "id": { "type": "string", "description": "Unique message ID" },
+        "conversation_id": { "type": "string", "description": "Deterministic conversation ID (sorted UIDs)" },
+        "sender_id": { "type": "string", "description": "Firebase Auth UID of sender" },
+        "receiver_id": { "type": "string", "description": "Firebase Auth UID of recipient" },
+        "sender_name": { "type": "string", "description": "Sender display name" },
+        "sender_phone": { "type": "string", "description": "Sender phone number" },
+        "text": { "type": "string", "description": "Message text content" },
+        "created_at": { "type": "number", "description": "Creation timestamp in ms" },
+        "read": { "type": "boolean", "description": "Read status" }
+      },
+      "rules": {
+        "read": "request.auth != null && (resource.data.sender_id == request.auth.uid || resource.data.receiver_id == request.auth.uid)",
+        "create": "request.auth != null && request.resource.data.sender_id == request.auth.uid",
+        "update": "request.auth != null && (resource.data.sender_id == request.auth.uid || resource.data.receiver_id == request.auth.uid)",
+        "delete": "request.auth != null && (resource.data.sender_id == request.auth.uid || resource.data.receiver_id == request.auth.uid)"
+      }
+    }
+  }
+}
