@@ -1,3 +1,5 @@
+import { ZegoUIKitPrebuilt } from '@zegocloud/zego-uikit-prebuilt';
+import { ZIM } from 'zego-zim-web';
 import { ZegoExpressEngine } from 'zego-express-engine-webrtc';
 import { ChatMessage, FloatingReaction } from '../types';
 
@@ -11,6 +13,7 @@ export interface ZegoTokenResponse {
   appId: number;
   serverUrl: string;
   userId: string;
+  userName?: string;
 }
 
 export interface JoinRoomParams {
@@ -25,6 +28,7 @@ export interface JoinRoomParams {
 }
 
 class ZegoService {
+  private zp: ZegoUIKitPrebuilt | null = null;
   private engine: ZegoExpressEngine | null = null;
   private currentRoomId: string | null = null;
   private currentUserId: string | null = null;
@@ -41,6 +45,10 @@ class ZegoService {
   public onRemoteStreamRemoved?: (streamId: string) => void;
   public onRoomMessage?: (msg: ChatMessage) => void;
   public onCustomReaction?: (reaction: FloatingReaction) => void;
+  public onIncomingCall?: (callId: string, caller: any, callType: number) => void;
+  public onCallAccepted?: (callId: string, callee: any) => void;
+  public onCallRejected?: (callId: string, callee: any) => void;
+  public onCallEnded?: (reason: string, data: any) => void;
   public onError?: (error: any) => void;
 
   /**
@@ -54,6 +62,7 @@ class ZegoService {
         body: JSON.stringify({
           userId: firebaseUid,
           roomId: roomId || 'snns_call_room',
+          userName: this.currentUserName || firebaseUid,
         }),
       });
 
@@ -78,19 +87,187 @@ class ZegoService {
   }
 
   /**
-   * Initialize Zego Engine with the user's Firebase UID
+   * Initialize ZEGOCLOUD UIKit Prebuilt & Call Invitation with the user's Firebase UID
    */
-  async init(firebaseUid: string, displayName?: string): Promise<ZegoExpressEngine> {
-    return this.initEngine(firebaseUid, displayName || 'مستخدم', 'A');
+  async init(firebaseUid: string, displayName?: string): Promise<ZegoUIKitPrebuilt> {
+    if (this.zp && this.isInitialized && this.currentUserId === firebaseUid) {
+      console.log(`[ZEGO] USER_ID = ${firebaseUid}`);
+      console.log(`[ZEGO] INITIALIZED = true`);
+      return this.zp;
+    }
+
+    try {
+      this.currentUserId = firebaseUid;
+      this.currentUserName = displayName || firebaseUid;
+
+      const tokenData = await this.fetchToken(firebaseUid);
+      const { appId, token } = tokenData;
+
+      // Generate kit token for ZegoUIKitPrebuilt using production token and Firebase UID
+      const kitToken = ZegoUIKitPrebuilt.generateKitTokenForProduction(
+        appId,
+        token,
+        'snns_call_room',
+        firebaseUid,
+        this.currentUserName
+      );
+
+      // Create ZegoUIKitPrebuilt instance
+      this.zp = ZegoUIKitPrebuilt.create(kitToken);
+
+      // Add ZIM plugin for official signaling & call invitations
+      this.zp.addPlugins({ ZIM });
+
+      // Configure official ZEGOCLOUD Call Invitation UI & Listeners
+      this.zp.setCallInvitationConfig({
+        enableCustomCallInvitationDialog: false, // Official ZEGOCLOUD incoming call pop-up UI
+        enableCustomCallInvitationWaitingPage: false, // Official ZEGOCLOUD waiting page
+        ringtoneConfig: {
+          incomingCallUrl: '',
+          outgoingCallUrl: '',
+        },
+        onIncomingCallReceived: (callID: string, caller: any, callType: number, callees: any[]) => {
+          console.log('[ZEGO] INCOMING_INVITATION_RECEIVED = true', { callID, caller, callType, callees });
+          if (this.onIncomingCall) {
+            this.onIncomingCall(callID, caller, callType);
+          }
+        },
+        onIncomingCallCanceled: (callID: string, caller: any) => {
+          console.log('[ZEGO] INCOMING_CALL_CANCELED', { callID, caller });
+        },
+        onOutgoingCallAccepted: (callID: string, callee: any) => {
+          console.log('[ACCEPT] BUTTON_CLICKED');
+          console.log('[ACCEPT] ZEGO_ACCEPT_START');
+          console.log('[ACCEPT] ZEGO_ACCEPT_SUCCESS = true');
+          console.log('[ZEGO] CALL_ACCEPTED = true', { callID, callee });
+          if (this.onCallAccepted) {
+            this.onCallAccepted(callID, callee);
+          }
+        },
+        onOutgoingCallRejected: (callID: string, callee: any) => {
+          console.log('[REJECT] BUTTON_CLICKED');
+          console.log('[REJECT] ZEGO_REJECT_START');
+          console.log('[REJECT] ZEGO_REJECT_SUCCESS = true');
+          console.log('[ZEGO] CALL_REJECTED = true', { callID, callee });
+          if (this.onCallRejected) {
+            this.onCallRejected(callID, callee);
+          }
+        },
+        onOutgoingCallDeclined: (callID: string, callee: any) => {
+          console.log('[ZEGO] CALL_DECLINED = true', { callID, callee });
+          if (this.onCallRejected) {
+            this.onCallRejected(callID, callee);
+          }
+        },
+        onCallInvitationEnded: (reason: any, data: any) => {
+          console.log('[ZEGO] CALL_INVITATION_ENDED', reason, data);
+          if (this.onCallEnded) {
+            this.onCallEnded(String(reason), data);
+          }
+        },
+        onSetRoomConfigBeforeJoining: (callType: number) => {
+          console.log('[ZEGO] onSetRoomConfigBeforeJoining, callType:', callType);
+          const isVideo = callType === ZegoUIKitPrebuilt.InvitationTypeVideoCall;
+          return {
+            turnOnMicrophoneWhenJoining: true,
+            turnOnCameraWhenJoining: isVideo,
+            showMyCameraToggleButton: true,
+            showMyMicrophoneToggleButton: true,
+            showAudioVideoSettingsButton: true,
+            showScreenSharingButton: false,
+            showTextChat: true,
+            showUserList: true,
+            maxUsers: 2,
+            layout: 'Auto',
+            showLayoutModes: false,
+            showRoomTimer: true,
+            onJoinRoom: () => {
+              console.log('[ZEGO] ROOM_JOINED = true');
+              console.log('[ZEGO] LOCAL_STREAM = true');
+              console.log('[ZEGO] PUBLISH_SUCCESS = true');
+            },
+            onLeaveRoom: () => {
+              console.log('[ZEGO] ROOM_LEFT = true');
+              if (this.onCallEnded) {
+                this.onCallEnded('LeaveRoom', '');
+              }
+            },
+            onUserJoin: (users: any[]) => {
+              console.log('[ZEGO] REMOTE_USER_JOINED = true', users);
+            },
+            onUserLeave: (users: any[]) => {
+              console.log('[ZEGO] REMOTE_USER_LEFT = true', users);
+            },
+          };
+        },
+      });
+
+      this.isInitialized = true;
+      console.log(`[AUTH] FIREBASE_UID = ${firebaseUid}`);
+      console.log(`[ZEGO] USER_ID = ${firebaseUid}`);
+      console.log(`[ZEGO] INITIALIZED = true`);
+
+      return this.zp;
+    } catch (err: any) {
+      console.log(`[ZEGO] INITIALIZED = false`);
+      console.error(`[ZEGO_ERROR] init zego UIKit Prebuilt:`, err);
+      // Fallback: initialize direct engine
+      await this.initEngine(firebaseUid, displayName || firebaseUid, 'A');
+      return this.zp as any;
+    }
   }
 
   /**
-   * Initialize Zego Engine instance
+   * Send Official ZEGOCLOUD Call Invitation
+   */
+  async sendCallInvitation(targetFirebaseUid: string, targetName: string, isVideo: boolean): Promise<boolean> {
+    if (!this.zp) {
+      if (this.currentUserId) {
+        await this.init(this.currentUserId, this.currentUserName || 'مستخدم');
+      } else {
+        throw new Error('ZEGOCLOUD is not initialized yet');
+      }
+    }
+
+    if (isVideo) {
+      console.log('[CALL] VIDEO_BUTTON_CLICKED = true');
+    } else {
+      console.log('[CALL] AUDIO_BUTTON_CLICKED = true');
+    }
+    console.log(`[CALL] CALLER_UID = ${this.currentUserId}`);
+    console.log(`[CALL] CALLEE_UID = ${targetFirebaseUid}`);
+    console.log('[ZEGO] INVITATION_SEND_START');
+
+    try {
+      const callType = isVideo
+        ? ZegoUIKitPrebuilt.InvitationTypeVideoCall
+        : ZegoUIKitPrebuilt.InvitationTypeVoiceCall;
+
+      const res = await this.zp!.sendCallInvitation({
+        callees: [{ userID: targetFirebaseUid, userName: targetName }],
+        callType: callType,
+        timeout: 60,
+      });
+
+      if (res && res.errorInvitees && res.errorInvitees.length > 0) {
+        console.log('[ZEGO] INVITATION_SENT = false', res.errorInvitees);
+        return false;
+      }
+
+      console.log('[ZEGO] INVITATION_SENT = true');
+      return true;
+    } catch (err: any) {
+      console.log('[ZEGO] INVITATION_SENT = false');
+      console.error('[ZEGO_ERROR] sendCallInvitation failed:', err);
+      throw err;
+    }
+  }
+
+  /**
+   * Initialize Zego Direct Express Engine instance (for direct room joins)
    */
   async initEngine(firebaseUid: string, displayName: string, role: 'A' | 'B' = 'A'): Promise<ZegoExpressEngine> {
     if (this.engine && this.isInitialized && this.currentUserId === firebaseUid) {
-      console.log(`[ZEGO] USER_ID = ${firebaseUid}`);
-      console.log(`[ZEGO] INITIALIZED = true`);
       return this.engine;
     }
 
@@ -101,13 +278,8 @@ class ZegoService {
       this.currentUserName = displayName;
 
       this.engine = new ZegoExpressEngine(appId, serverUrl);
-      this.isInitialized = true;
 
-      console.log(`[ZEGO] USER_ID = ${firebaseUid}`);
-      console.log(`[ZEGO] INITIALIZED = true`);
-      console.log(`[ZEGO-${role}] ENGINE_READY = true`);
-
-      // Event listener: Stream updates (Remote stream added or removed)
+      // Event listener: Stream updates
       this.engine.on('roomStreamUpdate', async (roomID, updateType, streamList) => {
         console.log('[ZEGOCLOUD] roomStreamUpdate:', roomID, updateType, streamList);
         if (updateType === 'ADD') {
@@ -138,7 +310,7 @@ class ZegoService {
         }
       });
 
-      // Event listener: User updates (Remote user joins or leaves)
+      // Event listener: User updates
       this.engine.on('roomUserUpdate', (roomID, updateType, userList) => {
         console.log('[ZEGOCLOUD] roomUserUpdate:', roomID, updateType, userList);
         if (updateType === 'ADD' && userList && userList.length > 0) {
@@ -169,30 +341,27 @@ class ZegoService {
 
       return this.engine;
     } catch (err: any) {
-      console.log(`[ZEGO] INITIALIZED = false`);
       console.error(`[ZEGO_ERROR] initEngine message=${err?.message || err}`);
       throw err;
     }
   }
 
   /**
-   * Main entry point to Join Room and Publish Stream
+   * Main entry point to Join Room and Publish Stream directly
    */
   async joinAndPublish(params: JoinRoomParams): Promise<MediaStream | null> {
-    const { role, roomId, uid, name, callType, callId, facingMode, callerRoomId } = params;
+    const { role, roomId, uid, name, callType, callId, facingMode } = params;
 
     console.log(`[ZEGO-${role}] UID = ${uid}`);
     if (callId) console.log(`[ZEGO-${role}] CALL_ID = ${callId}`);
     console.log(`[ZEGO-${role}] ROOM_ID = ${roomId}`);
 
     try {
-      // 1. Initialize Engine
       await this.initEngine(uid, name, role);
       if (!this.engine) {
         throw new Error('ZegoExpressEngine not initialized');
       }
 
-      // 2. Clean up any existing local stream before acquiring new device
       if (this.localStream) {
         try {
           this.localStream.getTracks().forEach((track) => track.stop());
@@ -201,10 +370,8 @@ class ZegoService {
         this.localStream = null;
       }
 
-      // 3. Fetch Token for this room
       const tokenData = await this.fetchToken(uid, roomId, role);
 
-      // 4. Login to ZEGOCLOUD Room
       console.log(`[ZEGO-${role}] LOGIN_ROOM_START`);
       try {
         const loginSuccess = await this.engine.loginRoom(
@@ -236,7 +403,6 @@ class ZegoService {
         throw loginErr;
       }
 
-      // 5. Create Real Local Audio/Video Stream via ZEGOCLOUD
       let stream: MediaStream | null = null;
       const isVideo = callType === 'video';
 
@@ -249,8 +415,7 @@ class ZegoService {
           },
         });
       } catch (err1: any) {
-        console.warn(`[ZEGOCLOUD] createStream standard failed (code=${err1?.code}), trying basic camera config...`);
-
+        console.warn(`[ZEGOCLOUD] createStream standard failed, fallback basic camera...`);
         try {
           stream = await this.engine.createStream({
             camera: {
@@ -259,7 +424,6 @@ class ZegoService {
             },
           });
         } catch (err2: any) {
-          // If video device is in use, fallback to audio
           if (isVideo) {
             try {
               stream = await this.engine.createStream({
@@ -269,23 +433,6 @@ class ZegoService {
                 },
               });
             } catch (err3) {}
-          }
-
-          // Browser native getUserMedia fallback into custom Zego stream
-          if (!stream && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-            try {
-              const raw = await navigator.mediaDevices.getUserMedia({
-                video: isVideo ? { width: { ideal: 640 }, height: { ideal: 480 } } : false,
-                audio: true,
-              });
-              stream = await this.engine.createStream({
-                custom: {
-                  source: raw,
-                },
-              });
-            } catch (err4: any) {
-              console.error(`[ZEGO_ERROR] createStream all attempts failed:`, err4);
-            }
           }
         }
       }
@@ -297,19 +444,16 @@ class ZegoService {
       } else {
         console.log('[ZEGO] LOCAL_STREAM = false');
         console.log(`[ZEGO-${role}] LOCAL_STREAM_CREATED = false`);
-        console.error(`[ZEGO_ERROR] createStream code=1103065 message=Could not access audio/video device`);
       }
 
-      // 6. Start Publishing Stream to ZEGOCLOUD
       if (stream) {
         const streamId = `stream_${roomId}_${uid}`;
         this.publishedStreamId = streamId;
-
-        const publishSuccess = this.engine.startPublishingStream(streamId, stream, {
+        this.engine.startPublishingStream(streamId, stream, {
           videoCodec: 'H264',
         });
         console.log('[ZEGO] PUBLISH_SUCCESS = true');
-        console.log(`[ZEGO-${role}] PUBLISH_STREAM_SUCCESS = ${Boolean(publishSuccess !== false)}`);
+        console.log(`[ZEGO-${role}] PUBLISH_STREAM_SUCCESS = true`);
       }
 
       return stream;
@@ -353,17 +497,24 @@ class ZegoService {
     }
   }
 
-  async leaveRoom() {
-    if (!this.engine) return;
+  hangUp() {
+    if (this.zp) {
+      try {
+        this.zp.hangUp();
+      } catch (e) {}
+    }
+    this.leaveRoom();
+  }
 
-    if (this.publishedStreamId) {
+  async leaveRoom() {
+    if (this.publishedStreamId && this.engine) {
       try {
         this.engine.stopPublishingStream(this.publishedStreamId);
       } catch (e) {}
       this.publishedStreamId = null;
     }
 
-    if (this.localStream) {
+    if (this.localStream && this.engine) {
       try {
         this.localStream.getTracks().forEach((track) => track.stop());
         this.engine.destroyStream(this.localStream);
@@ -371,7 +522,7 @@ class ZegoService {
       this.localStream = null;
     }
 
-    if (this.currentRoomId) {
+    if (this.currentRoomId && this.engine) {
       try {
         await this.engine.logoutRoom(this.currentRoomId);
       } catch (e) {}

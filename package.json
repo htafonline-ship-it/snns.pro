@@ -14,6 +14,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.4",
+    "@zegocloud/zego-uikit-prebuilt": "^2.18.2",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "firebase": "^12.17.1",
@@ -23,7 +24,8 @@
     "react-dom": "^19.0.1",
     "vite": "^6.2.3",
     "ws": "^8.21.3",
-    "zego-express-engine-webrtc": "^3.12.0"
+    "zego-express-engine-webrtc": "^3.12.0",
+    "zego-zim-web": "^3.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

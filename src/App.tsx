@@ -3,7 +3,6 @@ import { User, ActiveCall, CallState, CallType, ChatMessage, FloatingReaction } 
 import { AuthScreen } from './components/AuthScreen';
 import { MainScreen } from './components/MainScreen';
 import { VideoCallScreen } from './components/VideoCallScreen';
-import { IncomingCallModal } from './components/IncomingCallModal';
 import {
   playOutgoingRing,
   playIncomingRing,
@@ -618,8 +617,18 @@ export function App() {
       setCallState('calling');
       playOutgoingRing();
 
-      // 3. Start Caller ZEGOCLOUD Engine & Publish Stream
+      // 3. Send Official ZEGOCLOUD Call Invitation using Firebase UID
       if (!isSimulated) {
+        try {
+          await zegoService.sendCallInvitation(
+            targetUser.uid,
+            targetUser.name,
+            callType === 'video'
+          );
+        } catch (zegoErr) {
+          console.warn('[ZEGO] sendCallInvitation note:', zegoErr);
+        }
+
         try {
           const mediaStream = await zegoService.joinAndPublish({
             role: 'A',
@@ -978,21 +987,6 @@ export function App() {
           chatMessages={chatMessages}
           floatingReactions={floatingReactions}
           onTriggerReaction={handleTriggerReaction}
-        />
-      )}
-
-      {/* Incoming Call Ringing Overlay */}
-      {pendingIncomingCall && !activeCall && (
-        <IncomingCallModal
-          call={{
-            peerPhone: pendingIncomingCall.caller_phone,
-            peerName: pendingIncomingCall.caller_name,
-            peerAvatarColor: pendingIncomingCall.caller_avatarColor,
-            callType: pendingIncomingCall.callType,
-            direction: 'incoming',
-          }}
-          onAccept={handleAcceptIncomingCall}
-          onReject={handleRejectIncomingCall}
         />
       )}
 
