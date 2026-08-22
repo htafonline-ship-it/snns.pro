@@ -1,32 +1,20 @@
-# SNNS - Secure Network & Next-Gen Streaming Platform
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+</div>
 
-تطبيق محادثات واتصال صوتي ومرئي فائق الأمان عبر Daily.co وFirebase وExpress.
+# Run and deploy your AI Studio app
 
-## المميزات الرئيسية
-- 🎥 مكالمات فيديو وصوت فائقة الوضوح عبر Daily.co
-- 📡 رادار البحث عن الأجهزة القريبة مع دعم وضع الشبح (Ghost Mode)
-- 💬 محادثات نصية مباشرة مشفرة عبر Firestore
-- 🔒 مصادقة المستخدمين وحماية البيانات عبر Firebase Authentication
-- ⚡ خادم Express مدمج مع دعم النشر على Hostinger
+This contains everything you need to run your app locally.
 
-## التشغيل والتطوير
+View your app in AI Studio: https://ai.studio/apps/f420acb7-9a42-4aa2-af24-1ac0e4ede3f5
 
-### التثبيت
-```bash
-npm install
-```
+## Run Locally
 
-### التشغيل في بيئة التطوير
-```bash
-npm run dev
-```
+**Prerequisites:**  Node.js
 
-### البناء للإنتاج (Build)
-```bash
-npm run build
-```
 
-### بدء التشغيل في الإنتاج (Production Start)
-```bash
-npm start
-```
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

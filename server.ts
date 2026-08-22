@@ -531,14 +531,15 @@ async function startServer() {
 
           // End Active Call
           case 'call-end': {
-            const peerUid = (data.peerUid || data.to || '').trim();
+            const peerUid = (data.peerUid || data.to || data.callee_id || data.to_uid || data.from_uid || data.from || '').trim();
             const peerSocket = activeSockets.get(peerUid);
             if (peerSocket && peerSocket.readyState === WebSocket.OPEN) {
               peerSocket.send(
                 JSON.stringify({
                   type: 'call-ended',
                   callId: data.callId,
-                  from_uid: data.from_uid || data.from,
+                  from_uid: data.from_uid || data.from || data.caller_id,
+                  peerUid,
                 })
               );
             }
