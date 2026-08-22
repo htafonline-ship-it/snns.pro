@@ -23,85 +23,38 @@ const CALLS_COLLECTION = 'calls';
 const MESSAGES_COLLECTION = 'direct_messages';
 const BLOCKS_COLLECTION = 'blocks';
 
-const CACHE_PREFIX = 'snns_profile_cache_';
-const USERS_LIST_CACHE_KEY = 'snns_users_list_cache';
-
-function getCachedProfile(uid: string): User | null {
-  try {
-    const raw = localStorage.getItem(`${CACHE_PREFIX}${uid}`);
-    if (raw) return JSON.parse(raw) as User;
-  } catch (e) {
-    // Ignore storage parse errors
-  }
-  return null;
-}
-
-function setCachedProfile(uid: string, profile: User): void {
-  try {
-    localStorage.setItem(`${CACHE_PREFIX}${uid}`, JSON.stringify(profile));
-  } catch (e) {
-    // Ignore storage quota errors
-  }
-}
-
 /**
  * Save or update a user profile in Firestore
  * Document ID is strictly the Firebase Auth UID
  */
 export async function saveUserProfile(uid: string, data: Partial<User>): Promise<void> {
   if (!uid) throw new Error('Firebase UID is required');
+  const userRef = doc(db, USERS_COLLECTION, uid);
+  const existingSnap = await getDoc(userRef);
 
-  const cached = getCachedProfile(uid);
-  const updatedProfile: User = {
+  const payload: any = {
     uid,
-    phone: data.phone || cached?.phone || '',
-    name: data.name || data.display_name || cached?.name || 'مستخدم تواصل',
-    display_name: data.display_name || data.name || cached?.display_name || 'مستخدم تواصل',
-    username: data.username || cached?.username || '',
-    photo_url: data.photo_url || cached?.photo_url || '',
-    avatarColor: data.avatarColor || cached?.avatarColor || 'bg-emerald-600',
-    role: data.role || cached?.role || 'user',
-    isStealth: data.isStealth !== undefined ? Boolean(data.isStealth) : (cached?.isStealth ?? false),
-    isCallLocked: data.isCallLocked !== undefined ? Boolean(data.isCallLocked) : (cached?.isCallLocked ?? false),
-    status: data.status || cached?.status || 'online',
-    lastSeen: Date.now(),
-    createdAt: cached?.createdAt || Date.now(),
-    latitude: data.latitude !== undefined ? data.latitude : cached?.latitude,
-    longitude: data.longitude !== undefined ? data.longitude : cached?.longitude,
-    lastLocationUpdate: data.lastLocationUpdate || cached?.lastLocationUpdate,
-    deviceType: data.deviceType || cached?.deviceType || 'mobile',
+    display_name: data.name || data.display_name || 'مستخدم تواصل',
+    username: data.username || '',
+    phone: data.phone || '',
+    photo_url: data.photo_url || '',
+    avatar_color: data.avatarColor || 'bg-emerald-600',
+    role: data.role || 'user',
+    is_stealth: Boolean(data.isStealth),
+    is_call_locked: Boolean(data.isCallLocked),
+    status: data.status || 'online',
+    last_seen: Date.now(),
+    latitude: data.latitude !== undefined ? data.latitude : null,
+    longitude: data.longitude !== undefined ? data.longitude : null,
+    last_location_update: data.lastLocationUpdate || (data.latitude ? Date.now() : null),
+    device_type: data.deviceType || 'mobile',
   };
 
-  setCachedProfile(uid, updatedProfile);
-
-  try {
-    const userRef = doc(db, USERS_COLLECTION, uid);
-    const payload: any = {
-      uid,
-      display_name: updatedProfile.display_name,
-      username: updatedProfile.username,
-      phone: updatedProfile.phone,
-      photo_url: updatedProfile.photo_url,
-      avatar_color: updatedProfile.avatarColor,
-      role: updatedProfile.role,
-      is_stealth: updatedProfile.isStealth,
-      is_call_locked: updatedProfile.isCallLocked,
-      status: updatedProfile.status,
-      last_seen: Date.now(),
-      latitude: updatedProfile.latitude ?? null,
-      longitude: updatedProfile.longitude ?? null,
-      last_location_update: updatedProfile.lastLocationUpdate ?? null,
-      device_type: updatedProfile.deviceType,
-    };
-
-    await setDoc(userRef, payload, { merge: true });
-  } catch (err: any) {
-    if (err?.message?.includes('Quota exceeded')) {
-      console.warn('[Firestore Quota] Firestore quota reached. Saved profile locally:', err.message);
-    } else {
-      console.error('Failed to write profile to Firestore:', err);
-    }
+  if (!existingSnap.exists()) {
+    payload.created_at = Date.now();
   }
+
+  await setDoc(userRef, payload, { merge: true });
 }
 
 /**
@@ -113,13 +66,6 @@ export async function updateUserLocation(
   longitude: number
 ): Promise<void> {
   if (!uid) return;
-  const cached = getCachedProfile(uid);
-  if (cached) {
-    cached.latitude = latitude;
-    cached.longitude = longitude;
-    cached.lastLocationUpdate = Date.now();
-    setCachedProfile(uid, cached);
-  }
   try {
     const userRef = doc(db, USERS_COLLECTION, uid);
     await updateDoc(userRef, {
@@ -128,11 +74,8 @@ export async function updateUserLocation(
       last_location_update: Date.now(),
       last_seen: Date.now(),
     });
-  } catch (err: any) {
-    // Gracefully handle quota or network failure
-    if (!err?.message?.includes('Quota exceeded')) {
-      console.error('Failed to update user location:', err);
-    }
+  } catch (err) {
+    console.error('Failed to update user location:', err);
   }
 }
 
@@ -141,68 +84,46 @@ export async function updateUserLocation(
  */
 export async function toggleStealthMode(uid: string, isStealth: boolean): Promise<void> {
   if (!uid) return;
-  const cached = getCachedProfile(uid);
-  if (cached) {
-    cached.isStealth = isStealth;
-    setCachedProfile(uid, cached);
-  }
   try {
     const userRef = doc(db, USERS_COLLECTION, uid);
     await updateDoc(userRef, {
       is_stealth: isStealth,
       last_seen: Date.now(),
     });
-  } catch (err: any) {
-    if (!err?.message?.includes('Quota exceeded')) {
-      console.error('Failed to toggle stealth mode in Firestore:', err);
-    }
+  } catch (err) {
+    console.error('Failed to toggle stealth mode in Firestore:', err);
   }
 }
 
 /**
- * Get user profile by Firebase UID with resilient caching & quota fallback
+ * Get user profile by Firebase UID
  */
 export async function getUserProfile(uid: string): Promise<User | null> {
   if (!uid) return null;
-
   try {
     const userRef = doc(db, USERS_COLLECTION, uid);
     const snap = await getDoc(userRef);
-    if (snap.exists()) {
-      const d = snap.data();
-      const profile: User = {
-        uid: d.uid || uid,
-        phone: d.phone || '',
-        name: d.display_name || d.name || 'مستخدم تواصل',
-        display_name: d.display_name || d.name || 'مستخدم تواصل',
-        username: d.username || '',
-        photo_url: d.photo_url || '',
-        avatarColor: d.avatar_color || d.avatarColor || 'bg-emerald-600',
-        role: d.role || 'user',
-        isStealth: Boolean(d.is_stealth ?? d.isStealth),
-        isCallLocked: Boolean(d.is_call_locked ?? d.isCallLocked),
-        status: d.status || 'offline',
-        lastSeen: d.last_seen || Date.now(),
-        createdAt: d.created_at || Date.now(),
-      };
-      setCachedProfile(uid, profile);
-      return profile;
-    }
-  } catch (err: any) {
-    if (err?.message?.includes('Quota exceeded')) {
-      console.warn('[Firestore Quota] Firestore quota reached on getUserProfile. Using local fallback.');
-    } else {
-      console.error('Error getting user profile from Firestore:', err);
-    }
+    if (!snap.exists()) return null;
+    const d = snap.data();
+    return {
+      uid: d.uid || uid,
+      phone: d.phone || '',
+      name: d.display_name || d.name || 'مستخدم تواصل',
+      display_name: d.display_name || d.name || 'مستخدم تواصل',
+      username: d.username || '',
+      photo_url: d.photo_url || '',
+      avatarColor: d.avatar_color || d.avatarColor || 'bg-emerald-600',
+      role: d.role || 'user',
+      isStealth: Boolean(d.is_stealth ?? d.isStealth),
+      isCallLocked: Boolean(d.is_call_locked ?? d.isCallLocked),
+      status: d.status || 'offline',
+      lastSeen: d.last_seen || Date.now(),
+      createdAt: d.created_at || Date.now(),
+    };
+  } catch (err) {
+    console.error('Error getting user profile from Firestore:', err);
+    return null;
   }
-
-  // Fallback to cached profile if Firestore read failed (Quota exceeded or offline)
-  const cached = getCachedProfile(uid);
-  if (cached) {
-    return cached;
-  }
-
-  return null;
 }
 
 /**
@@ -259,7 +180,7 @@ export async function searchUserByPhoneOrUsername(queryStr: string): Promise<Use
 }
 
 /**
- * Fetch all users from Firestore with real-time subscription & quota resilience
+ * Fetch all users from Firestore with real-time subscription
  */
 export function subscribeAllUsers(currentUid: string, callback: (users: User[]) => void) {
   const usersRef = collection(db, USERS_COLLECTION);
@@ -290,26 +211,10 @@ export function subscribeAllUsers(currentUid: string, callback: (users: User[]) 
           deviceType: d.device_type || 'mobile',
         });
       });
-      try {
-        localStorage.setItem(USERS_LIST_CACHE_KEY, JSON.stringify(list));
-      } catch (e) {}
       callback(list);
     },
     (err) => {
-      if (err?.message?.includes('Quota exceeded')) {
-        console.warn('[Firestore Quota] Quota reached on subscribeAllUsers. Using cached user list.');
-      } else {
-        console.error('Failed to subscribe users:', err);
-      }
-      try {
-        const raw = localStorage.getItem(USERS_LIST_CACHE_KEY);
-        if (raw) {
-          const cachedList = JSON.parse(raw);
-          if (Array.isArray(cachedList) && cachedList.length > 0) {
-            callback(cachedList);
-          }
-        }
-      } catch (e) {}
+      console.error('Failed to subscribe users:', err);
     }
   );
 }
@@ -343,7 +248,6 @@ export async function deleteContact(ownerUid: string, contactUid: string): Promi
 }
 
 export function subscribeContacts(ownerUid: string, callback: (contacts: Contact[]) => void) {
-  const CONTACTS_CACHE_KEY = `snns_contacts_cache_${ownerUid}`;
   const q = query(
     collection(db, CONTACTS_COLLECTION),
     where('owner_uid', '==', ownerUid),
@@ -367,26 +271,10 @@ export function subscribeContacts(ownerUid: string, callback: (contacts: Contact
           created_at: d.created_at || Date.now(),
         });
       });
-      try {
-        localStorage.setItem(CONTACTS_CACHE_KEY, JSON.stringify(contacts));
-      } catch (e) {}
       callback(contacts);
     },
     (err) => {
-      if (err?.message?.includes('Quota exceeded') || (err as any)?.code === 'resource-exhausted') {
-        console.warn('[Firestore Quota] Quota exceeded on subscribeContacts. Using local cached contacts.');
-      } else {
-        console.warn('Failed to subscribe contacts:', err);
-      }
-      try {
-        const raw = localStorage.getItem(CONTACTS_CACHE_KEY);
-        if (raw) {
-          const cached = JSON.parse(raw);
-          if (Array.isArray(cached)) {
-            callback(cached);
-          }
-        }
-      } catch (e) {}
+      console.error('Failed to subscribe contacts:', err);
     }
   );
 }
@@ -517,7 +405,6 @@ export async function updateCallRecord(
 }
 
 export function subscribeUserCalls(userUid: string, callback: (calls: CallLog[]) => void) {
-  const CALLS_CACHE_KEY = `snns_calls_cache_${userUid}`;
   // Query calls where user is caller or callee
   const q1 = query(
     collection(db, CALLS_COLLECTION),
@@ -538,86 +425,58 @@ export function subscribeUserCalls(userUid: string, callback: (calls: CallLog[])
     const map = new Map<string, CallLog>();
     [...list1, ...list2].forEach((c) => map.set(c.id, c));
     const merged = Array.from(map.values()).sort((a, b) => b.created_at - a.created_at);
-    try {
-      localStorage.setItem(CALLS_CACHE_KEY, JSON.stringify(merged));
-    } catch (e) {}
     callback(merged);
   };
 
-  const handleQuotaFallback = (err: any) => {
-    if (err?.message?.includes('Quota exceeded') || (err as any)?.code === 'resource-exhausted') {
-      console.warn('[Firestore Quota] Quota exceeded on subscribeUserCalls. Using cached call logs.');
-    } else {
-      console.warn('subscribeUserCalls error:', err);
-    }
-    try {
-      const raw = localStorage.getItem(CALLS_CACHE_KEY);
-      if (raw) {
-        const cached = JSON.parse(raw);
-        if (Array.isArray(cached)) {
-          callback(cached);
-        }
-      }
-    } catch (e) {}
-  };
+  const unsub1 = onSnapshot(q1, (snap) => {
+    list1 = snap.docs.map((docSnap) => {
+      const d = docSnap.data();
+      return {
+        id: d.id || docSnap.id,
+        caller_id: d.caller_id,
+        callee_id: d.callee_id,
+        caller_name: d.caller_name,
+        callee_name: d.callee_name,
+        caller_phone: d.caller_phone,
+        callee_phone: d.callee_phone,
+        call_type: d.call_type || 'video',
+        status: d.status || 'ended',
+        duration: d.duration || 0,
+        room_id: d.room_id || '',
+        room_url: d.room_url || '',
+        created_at: d.created_at || Date.now(),
+        started_at: d.started_at,
+        answered_at: d.answered_at,
+        ended_at: d.ended_at,
+      };
+    });
+    mergeAndEmit();
+  });
 
-  const unsub1 = onSnapshot(
-    q1,
-    (snap) => {
-      list1 = snap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        return {
-          id: d.id || docSnap.id,
-          caller_id: d.caller_id,
-          callee_id: d.callee_id,
-          caller_name: d.caller_name,
-          callee_name: d.callee_name,
-          caller_phone: d.caller_phone,
-          callee_phone: d.callee_phone,
-          call_type: d.call_type || 'video',
-          status: d.status || 'ended',
-          duration: d.duration || 0,
-          room_id: d.room_id || '',
-          room_url: d.room_url || '',
-          created_at: d.created_at || Date.now(),
-          started_at: d.started_at,
-          answered_at: d.answered_at,
-          ended_at: d.ended_at,
-        };
-      });
-      mergeAndEmit();
-    },
-    handleQuotaFallback
-  );
-
-  const unsub2 = onSnapshot(
-    q2,
-    (snap) => {
-      list2 = snap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        return {
-          id: d.id || docSnap.id,
-          caller_id: d.caller_id,
-          callee_id: d.callee_id,
-          caller_name: d.caller_name,
-          callee_name: d.callee_name,
-          caller_phone: d.caller_phone,
-          callee_phone: d.callee_phone,
-          call_type: d.call_type || 'video',
-          status: d.status || 'ended',
-          duration: d.duration || 0,
-          room_id: d.room_id || '',
-          room_url: d.room_url || '',
-          created_at: d.created_at || Date.now(),
-          started_at: d.started_at,
-          answered_at: d.answered_at,
-          ended_at: d.ended_at,
-        };
-      });
-      mergeAndEmit();
-    },
-    handleQuotaFallback
-  );
+  const unsub2 = onSnapshot(q2, (snap) => {
+    list2 = snap.docs.map((docSnap) => {
+      const d = docSnap.data();
+      return {
+        id: d.id || docSnap.id,
+        caller_id: d.caller_id,
+        callee_id: d.callee_id,
+        caller_name: d.caller_name,
+        callee_name: d.callee_name,
+        caller_phone: d.caller_phone,
+        callee_phone: d.callee_phone,
+        call_type: d.call_type || 'video',
+        status: d.status || 'ended',
+        duration: d.duration || 0,
+        room_id: d.room_id || '',
+        room_url: d.room_url || '',
+        created_at: d.created_at || Date.now(),
+        started_at: d.started_at,
+        answered_at: d.answered_at,
+        ended_at: d.ended_at,
+      };
+    });
+    mergeAndEmit();
+  });
 
   return () => {
     unsub1();
@@ -778,7 +637,6 @@ export function subscribeConversationMessages(
 ) {
   if (!currentUid || !peerUid) return () => {};
   const convId = [currentUid, peerUid].sort().join('_');
-  const CONV_CACHE_KEY = `snns_conv_msgs_${convId}`;
 
   const q = query(
     collection(db, MESSAGES_COLLECTION),
@@ -811,26 +669,10 @@ export function subscribeConversationMessages(
       });
       // Sort client-side by created_at ascending
       msgs.sort((a, b) => a.created_at - b.created_at);
-      try {
-        localStorage.setItem(CONV_CACHE_KEY, JSON.stringify(msgs));
-      } catch (e) {}
       callback(msgs);
     },
     (err) => {
-      if (err?.message?.includes('Quota exceeded') || (err as any)?.code === 'resource-exhausted') {
-        console.warn(`[Firestore Quota] Quota exceeded for conversation ${convId}. Using local cache.`);
-      } else {
-        console.warn('subscribeConversationMessages error:', err);
-      }
-      try {
-        const raw = localStorage.getItem(CONV_CACHE_KEY);
-        if (raw) {
-          const cached = JSON.parse(raw);
-          if (Array.isArray(cached)) {
-            callback(cached);
-          }
-        }
-      } catch (e) {}
+      console.warn('subscribeConversationMessages error:', err);
     }
   );
 }
@@ -843,7 +685,6 @@ export function subscribeUserMessages(
   callback: (messages: DirectMessage[]) => void
 ) {
   if (!currentUid) return () => {};
-  const USER_MSGS_CACHE_KEY = `snns_user_msgs_cache_${currentUid}`;
 
   // Subscribe to received messages
   const qReceived = query(
@@ -866,52 +707,24 @@ export function subscribeUserMessages(
     const map = new Map<string, DirectMessage>();
     [...receivedMsgs, ...sentMsgs].forEach((m) => map.set(m.id, m));
     const all = Array.from(map.values()).sort((a, b) => b.created_at - a.created_at);
-    try {
-      localStorage.setItem(USER_MSGS_CACHE_KEY, JSON.stringify(all));
-    } catch (e) {}
     callback(all);
   };
 
-  const handleQuotaFallback = (err: any) => {
-    if (err?.message?.includes('Quota exceeded') || (err as any)?.code === 'resource-exhausted') {
-      console.warn('[Firestore Quota] Quota exceeded on subscribeUserMessages. Using cached chat list.');
-    } else {
-      console.warn('subscribeUserMessages error:', err);
-    }
-    try {
-      const raw = localStorage.getItem(USER_MSGS_CACHE_KEY);
-      if (raw) {
-        const cached = JSON.parse(raw);
-        if (Array.isArray(cached)) {
-          callback(cached);
-        }
-      }
-    } catch (e) {}
-  };
+  const unsubReceived = onSnapshot(qReceived, (snap) => {
+    receivedMsgs = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    } as DirectMessage));
+    emit();
+  });
 
-  const unsubReceived = onSnapshot(
-    qReceived,
-    (snap) => {
-      receivedMsgs = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      } as DirectMessage));
-      emit();
-    },
-    handleQuotaFallback
-  );
-
-  const unsubSent = onSnapshot(
-    qSent,
-    (snap) => {
-      sentMsgs = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      } as DirectMessage));
-      emit();
-    },
-    handleQuotaFallback
-  );
+  const unsubSent = onSnapshot(qSent, (snap) => {
+    sentMsgs = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    } as DirectMessage));
+    emit();
+  });
 
   return () => {
     unsubReceived();

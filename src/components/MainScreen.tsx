@@ -340,19 +340,14 @@ export const MainScreen: React.FC<MainScreenProps> = ({
     }
   };
 
-  // Non-admin users cannot see admin in directory for stealth
-  const isTargetAdmin = (u: User) => u.phone === '1007363904' || u.role === 'admin';
-
   // Count of users who are visible and NOT in Ghost mode (!isStealth)
   const nearbyVisibleCount = allUsers.filter(
-    (u) => u.uid !== currentUser.uid && !u.isStealth && (isAdmin || !isTargetAdmin(u))
+    (u) => u.uid !== currentUser.uid && !u.isStealth
   ).length;
 
   const visibleUsers = allUsers.filter((u) => {
     // Current user doesn't call themselves
     if (u.uid === currentUser.uid) return false;
-    // Non-admin users cannot see admin in directory for stealth
-    if (!isAdmin && isTargetAdmin(u)) return false;
 
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase().trim();

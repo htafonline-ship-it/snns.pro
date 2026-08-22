@@ -305,7 +305,10 @@ async function startServer() {
         });
       }
 
-      console.log(`[DAILY_TOKEN] Request token: roomName=${roomName}, userId=${userId}, isOwner=${Boolean(isOwner)}`);
+      // Ensure roomName is strictly the identifier, not a full URL
+      const cleanRoomName = (roomName.split('/').filter(Boolean).pop() || roomName).split('?')[0];
+
+      console.log(`[DAILY_TOKEN] Request token: cleanRoomName=${cleanRoomName}, userId=${userId}, isOwner=${Boolean(isOwner)}`);
 
       const tokenRes = await fetch('https://api.daily.co/v1/meeting-tokens', {
         method: 'POST',
@@ -315,7 +318,7 @@ async function startServer() {
         },
         body: JSON.stringify({
           properties: {
-            room_name: roomName,
+            room_name: cleanRoomName,
             user_name: userName || 'مستخدم تواصل',
             user_id: userId,
             is_owner: Boolean(isOwner),
@@ -337,10 +340,10 @@ async function startServer() {
         });
       }
 
-      console.log(`[DAILY_TOKEN] TOKEN_CREATED = true for user=${userId} in room=${roomName}`);
+      console.log(`[DAILY_TOKEN] TOKEN_CREATED = true for user=${userId} in room=${cleanRoomName}`);
       return res.json({
         token: data.token,
-        roomName,
+        roomName: cleanRoomName,
         userId,
         TOKEN_CREATED: true,
       });
@@ -442,10 +445,12 @@ async function startServer() {
                   type: 'incoming-call',
                   callId: data.callId || `call_${Date.now()}`,
                   caller_id: callerUid, // Strictly Firebase Auth UID
+                  caller_phone: data.caller_phone || '',
                   callee_id: calleeUid, // Strictly Firebase Auth UID
                   caller_name: data.caller_name || '',
                   callType: data.callType || 'video',
                   roomId: data.roomId || [callerUid, calleeUid].sort().join('_'),
+                  roomUrl: data.roomUrl || '',
                   isStealth: data.isStealth,
                 })
               );
@@ -490,6 +495,7 @@ async function startServer() {
                   callId: data.callId,
                   callee_id: data.callee_id || data.from,
                   roomId: data.roomId,
+                  roomUrl: data.roomUrl || '',
                 })
               );
             }

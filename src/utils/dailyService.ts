@@ -18,15 +18,138 @@ export interface DailyTokenResponse {
   FIREBASE_BACKEND_AUTH_VERIFIED?: boolean;
 }
 
+export interface DailyParticipantInfo {
+  sessionId: string;
+  userName: string;
+  userId: string;
+  isLocal: boolean;
+  audio: boolean;
+  video: boolean;
+  joinedAt?: number;
+}
+
+export interface DailyRoomStateSummary {
+  participantCount: number;
+  hasBothJoined: boolean;
+  localParticipant: DailyParticipantInfo | null;
+  remoteParticipants: DailyParticipantInfo[];
+  allParticipants: DailyParticipantInfo[];
+}
+
 class DailyService {
   private callFrame: DailyCall | null = null;
   private currentRoomUrl: string | null = null;
+  private currentRoomName: string | null = null;
 
-  public onJoined?: () => void;
+  // Real-time event callbacks
+  public onJoined?: (summary: DailyRoomStateSummary) => void;
   public onLeft?: () => void;
-  public onParticipantJoined?: (event: any) => void;
-  public onParticipantLeft?: (event: any) => void;
+  public onParticipantJoined?: (event: any, summary: DailyRoomStateSummary) => void;
+  public onParticipantLeft?: (event: any, summary: DailyRoomStateSummary) => void;
+  public onParticipantUpdated?: (event: any, summary: DailyRoomStateSummary) => void;
+  public onParticipantCountChange?: (
+    count: number,
+    hasBothJoined: boolean,
+    summary: DailyRoomStateSummary
+  ) => void;
+  public onBothUsersJoined?: (summary: DailyRoomStateSummary) => void;
   public onError?: (error: any) => void;
+
+  /**
+   * Calculate current participants breakdown and true participant count from the Daily call frame
+   */
+  public getParticipantsSummary(): DailyRoomStateSummary {
+    if (!this.callFrame) {
+      return {
+        participantCount: 0,
+        hasBothJoined: false,
+        localParticipant: null,
+        remoteParticipants: [],
+        allParticipants: [],
+      };
+    }
+
+    try {
+      const rawParticipants: any = this.callFrame.participants() || {};
+      let localParticipant: DailyParticipantInfo | null = null;
+      const remoteParticipants: DailyParticipantInfo[] = [];
+
+      if (rawParticipants && rawParticipants.local) {
+        const l = rawParticipants.local;
+        localParticipant = {
+          sessionId: l.session_id || 'local',
+          userName: l.user_name || 'مستخدم',
+          userId: l.user_id || '',
+          isLocal: true,
+          audio: Boolean(l.audio),
+          video: Boolean(l.video),
+        };
+      }
+
+      Object.entries(rawParticipants).forEach(([key, val]: [string, any]) => {
+        if (key === 'local' || !val) return;
+        if (val.session_id && !val.local) {
+          remoteParticipants.push({
+            sessionId: val.session_id,
+            userName: val.user_name || 'مستخدم',
+            userId: val.user_id || '',
+            isLocal: false,
+            audio: Boolean(val.audio),
+            video: Boolean(val.video),
+          });
+        }
+      });
+
+      const allParticipants = localParticipant
+        ? [localParticipant, ...remoteParticipants]
+        : remoteParticipants;
+
+      const participantCount = allParticipants.length;
+      const hasBothJoined = participantCount >= 2;
+
+      return {
+        participantCount,
+        hasBothJoined,
+        localParticipant,
+        remoteParticipants,
+        allParticipants,
+      };
+    } catch (err) {
+      console.warn('[DAILY] Error getting participants summary:', err);
+      return {
+        participantCount: 0,
+        hasBothJoined: false,
+        localParticipant: null,
+        remoteParticipants: [],
+        allParticipants: [],
+      };
+    }
+  }
+
+  /**
+   * Log real-time participant status and metrics to console
+   */
+  private logParticipantStatus(eventContext: string): DailyRoomStateSummary {
+    const summary = this.getParticipantsSummary();
+    const { participantCount, hasBothJoined, localParticipant, remoteParticipants } = summary;
+
+    console.log(`[DAILY_STATUS] === ${eventContext} ===`);
+    console.log(`[DAILY_STATUS] ROOM_NAME = ${this.currentRoomName || 'unknown'}`);
+    console.log(`[DAILY_STATUS] PARTICIPANT_COUNT = ${participantCount}`);
+    console.log(`[DAILY_STATUS] TWO_USERS_JOINED = ${hasBothJoined}`);
+    console.log(`[DAILY_STATUS] LOCAL_SESSION_ID = ${localParticipant?.sessionId || 'none'}`);
+    console.log(
+      `[DAILY_STATUS] REMOTE_PARTICIPANTS_COUNT = ${remoteParticipants.length}`
+    );
+    if (remoteParticipants.length > 0) {
+      console.log(
+        `[DAILY_STATUS] REMOTE_NAMES = [${remoteParticipants.map((r) => `${r.userName} (${r.sessionId})`).join(', ')}]`
+      );
+    }
+    console.log(`[DAILY_STATUS] REALTIME_VERIFIED_ROOM = ${hasBothJoined}`);
+
+    return summary;
+  }
 
   /**
    * Request backend to create a single Private Daily Room using DAILY_API_KEY
@@ -118,10 +241,15 @@ class DailyService {
       console.log(`[TOKEN] TOKEN_CREATED = ${tokenCreated}`);
       console.log(`CALL_ROOM_NAME = ${roomName}`);
       console.log(`TOKEN_ROOM_NAME = ${data.roomName || roomName}`);
-      console.log(`ROOM_NAME_MATCH = ${Boolean(roomName && (data.roomName === roomName || !data.roomName))}`);
+      console.log(
+        `ROOM_NAME_MATCH = ${Boolean(roomName && (data.roomName === roomName || !data.roomName))}`
+      );
 
       if (!res.ok || !data.token) {
-        const errorMsg = data.error || data.details?.error || `فشل في إنشاء رمز الدخول (Token) للغرفة (HTTP ${res.status})`;
+        const errorMsg =
+          data.error ||
+          data.details?.error ||
+          `فشل في إنشاء رمز الدخول (Token) للغرفة (HTTP ${res.status})`;
         console.error('[DAILY_TOKEN_ERROR] Token creation failed:', errorMsg);
         throw new Error(errorMsg);
       }
@@ -134,7 +262,7 @@ class DailyService {
   }
 
   /**
-   * Embed and join Daily Prebuilt Call within a container element
+   * Embed and join Daily Prebuilt Call within a container element with real-time participant event monitoring
    */
   async joinPrebuilt(
     container: HTMLElement,
@@ -188,57 +316,75 @@ class DailyService {
 
     this.callFrame = frame;
     this.currentRoomUrl = roomUrl;
+    this.currentRoomName = roomUrl.split('/').filter(Boolean).pop() || null;
 
-    const logParticipants = (context: string) => {
-      try {
-        const p = frame.participants();
-        const pKeys = Object.keys(p || {});
-        const count = pKeys.length;
-        const local = p.local;
-        const remoteList = Object.values(p || {}).filter((part: any) => !part.local);
-        const hasRemote = remoteList.length > 0;
-        const remote = remoteList[0];
-
-        console.log(`[DAILY_STATUS] ${context}:`);
-        console.log(`[DAILY_STATUS] LOCAL_SESSION_ID = ${local?.session_id || 'none'}`);
-        console.log(`[DAILY_STATUS] REMOTE_SESSION_ID = ${remote?.session_id || 'none'}`);
-        console.log(`[DAILY_STATUS] PARTICIPANT_COUNT = ${count}`);
-        console.log(`[DAILY_STATUS] REMOTE_PARTICIPANT = ${hasRemote}`);
-        console.log(`[DAILY_STATUS] DAILY_AUDIO = ${Boolean(local?.audio)}`);
-        console.log(`[DAILY_STATUS] DAILY_VIDEO = ${Boolean(local?.video)}`);
-      } catch (err) {
-        console.warn('[DAILY_STATUS_WARN]', err);
-      }
-    };
-
+    // Real-time Event Listeners for Daily Room Participants
     frame.on('joined-meeting', () => {
       console.log('[DAILY] JOIN_SUCCESS = true');
       console.log('[DAILY] ERROR_CODE = NONE');
       console.log('[DAILY] ERROR_MESSAGE = NONE');
       console.log('[DAILY] JOINED_MEETING = true');
-      logParticipants('JOINED_MEETING');
-      if (this.onJoined) this.onJoined();
+
+      const summary = this.logParticipantStatus('JOINED_MEETING');
+
+      if (this.onJoined) this.onJoined(summary);
+      if (this.onParticipantCountChange) {
+        this.onParticipantCountChange(summary.participantCount, summary.hasBothJoined, summary);
+      }
+      if (summary.hasBothJoined && this.onBothUsersJoined) {
+        this.onBothUsersJoined(summary);
+      }
     });
 
     frame.on('left-meeting', () => {
       console.log('[DAILY] LEFT_MEETING = true');
+      console.log('[DAILY_STATUS] PARTICIPANT_COUNT = 0');
       if (this.onLeft) this.onLeft();
     });
 
-    frame.on('participant-joined', (e) => {
-      console.log('[DAILY] PARTICIPANT_JOINED', e);
-      logParticipants('PARTICIPANT_JOINED');
-      if (this.onParticipantJoined) this.onParticipantJoined(e);
+    frame.on('participant-joined', (e: any) => {
+      console.log(
+        `[DAILY] PARTICIPANT_JOINED: ${e?.participant?.user_name || e?.participant?.session_id}`
+      );
+      const summary = this.logParticipantStatus('PARTICIPANT_JOINED');
+
+      if (this.onParticipantJoined) this.onParticipantJoined(e, summary);
+      if (this.onParticipantCountChange) {
+        this.onParticipantCountChange(summary.participantCount, summary.hasBothJoined, summary);
+      }
+      if (summary.hasBothJoined && this.onBothUsersJoined) {
+        this.onBothUsersJoined(summary);
+      }
     });
 
-    frame.on('participant-updated', (e) => {
-      logParticipants('PARTICIPANT_UPDATED');
+    frame.on('participant-updated', (e: any) => {
+      const summary = this.logParticipantStatus('PARTICIPANT_UPDATED');
+      if (this.onParticipantUpdated) this.onParticipantUpdated(e, summary);
+      if (this.onParticipantCountChange) {
+        this.onParticipantCountChange(summary.participantCount, summary.hasBothJoined, summary);
+      }
     });
 
-    frame.on('participant-left', (e) => {
-      console.log('[DAILY] PARTICIPANT_LEFT', e);
-      logParticipants('PARTICIPANT_LEFT');
-      if (this.onParticipantLeft) this.onParticipantLeft(e);
+    frame.on('participant-left', (e: any) => {
+      console.log(
+        `[DAILY] PARTICIPANT_LEFT: ${e?.participant?.user_name || e?.participant?.session_id}`
+      );
+      const summary = this.logParticipantStatus('PARTICIPANT_LEFT');
+
+      if (this.onParticipantLeft) this.onParticipantLeft(e, summary);
+      if (this.onParticipantCountChange) {
+        this.onParticipantCountChange(summary.participantCount, summary.hasBothJoined, summary);
+      }
+    });
+
+    frame.on('track-started', (e: any) => {
+      console.log(`[DAILY] TRACK_STARTED: ${e?.track?.kind} from ${e?.participant?.user_name || 'local'}`);
+      this.logParticipantStatus('TRACK_STARTED');
+    });
+
+    frame.on('track-stopped', (e: any) => {
+      console.log(`[DAILY] TRACK_STOPPED: ${e?.track?.kind} from ${e?.participant?.user_name || 'local'}`);
+      this.logParticipantStatus('TRACK_STOPPED');
     });
 
     frame.on('error', (e: any) => {
@@ -249,6 +395,10 @@ class DailyService {
       console.log(`[DAILY] ERROR_CODE = ${errCode}`);
       console.log(`[DAILY] ERROR_MESSAGE = ${errMsg}`);
       if (this.onError) this.onError(errMsg);
+    });
+
+    frame.on('nonfatal-error', (e: any) => {
+      console.warn('[DAILY_WARN] Non-fatal frame error:', e);
     });
 
     try {
@@ -296,6 +446,7 @@ class DailyService {
       }
       this.callFrame = null;
       this.currentRoomUrl = null;
+      this.currentRoomName = null;
     }
   }
 
@@ -305,3 +456,4 @@ class DailyService {
 }
 
 export const dailyService = new DailyService();
+

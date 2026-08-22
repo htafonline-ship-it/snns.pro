@@ -400,7 +400,7 @@ export function App() {
                 setPendingIncomingCall({
                   callId: data.callId,
                   roomId: data.roomId,
-                  roomUrl: data.roomUrl || data.roomId,
+                  roomUrl: data.roomUrl || (data.roomId && data.roomId.startsWith('http') ? data.roomId : ''),
                   caller_id: callerUid,
                   caller_name: callerProfile?.name || data.caller_name || data.from?.name || 'مستخدم',
                   caller_phone: callerProfile?.phone || data.caller_phone || data.from?.phone || '',

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActiveCall, CallState, ChatMessage, FloatingReaction } from '../types';
 import {
   PhoneOff,
@@ -7,8 +7,10 @@ import {
   Video,
   Mic,
   ShieldCheck,
+  Users,
+  UserCheck,
 } from 'lucide-react';
-import { dailyService } from '../utils/dailyService';
+import { dailyService, DailyRoomStateSummary } from '../utils/dailyService';
 
 interface VideoCallScreenProps {
   activeCall: ActiveCall;
@@ -16,7 +18,7 @@ interface VideoCallScreenProps {
   currentUserId?: string;
   currentUserName?: string;
 
-  // نبقي هذه الخصائص للتوافق مع App.tsx الحالي
+  // الخصائص للتوافق مع App.tsx
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
   onEndCall: () => void;
@@ -34,7 +36,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
   activeCall,
   callState,
   currentUserId = '',
-  currentUserName = 'مستخدم SNNS',
+  currentUserName = 'مستخدم تواصل',
   onEndCall,
 }) => {
   const [meetingToken, setMeetingToken] = useState('');
@@ -42,23 +44,40 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
   const [error, setError] = useState('');
   const [seconds, setSeconds] = useState(0);
 
+  // Real-time participant state from Daily events
+  const [participantCount, setParticipantCount] = useState<number>(0);
+  const [bothUsersJoined, setBothUsersJoined] = useState<boolean>(false);
+  const [isRoomJoined, setIsRoomJoined] = useState<boolean>(false);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+
   const roomName = useMemo(() => {
-    if (activeCall.roomId) {
-      return activeCall.roomId;
+    if (activeCall.roomId && !activeCall.roomId.startsWith('http')) {
+      return activeCall.roomId.split('?')[0].trim();
     }
 
     if (activeCall.roomUrl) {
-      return activeCall.roomUrl.split('/').filter(Boolean).pop() || '';
+      const clean = activeCall.roomUrl.split('?')[0].trim();
+      return clean.split('/').filter(Boolean).pop() || '';
     }
 
     return '';
   }, [activeCall.roomId, activeCall.roomUrl]);
 
+  const effectiveRoomUrl = useMemo(() => {
+    if (activeCall.roomUrl && activeCall.roomUrl.startsWith('http')) {
+      return activeCall.roomUrl.split('?')[0].trim();
+    }
+    if (activeCall.roomId && activeCall.roomId.startsWith('http')) {
+      return activeCall.roomId.split('?')[0].trim();
+    }
+    return activeCall.roomUrl || '';
+  }, [activeCall.roomUrl, activeCall.roomId]);
+
   const isConnected = callState === 'connected';
 
   /*
-   * جلب Meeting Token فقط بعد قبول المكالمة.
-   * لا ننشئ غرفة جديدة هنا.
+   * 1. جلب Meeting Token عند قبول المكالمة
    */
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +87,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
         return;
       }
 
-      if (!activeCall.roomUrl) {
+      if (!effectiveRoomUrl) {
         setError('رابط غرفة الاتصال غير موجود');
         return;
       }
@@ -87,10 +106,10 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
       setError('');
 
       try {
-        console.log('[DAILY_SIMPLE] PREPARE_START');
-        console.log('[DAILY_SIMPLE] CURRENT_UID =', currentUserId);
-        console.log('[DAILY_SIMPLE] ROOM_NAME =', roomName);
-        console.log('[DAILY_SIMPLE] ROOM_URL =', activeCall.roomUrl);
+        console.log('[DAILY] PREPARE_START');
+        console.log('[DAILY] CURRENT_UID =', currentUserId);
+        console.log('[DAILY] ROOM_NAME =', roomName);
+        console.log('[DAILY] ROOM_URL =', effectiveRoomUrl);
 
         const token = await dailyService.getMeetingToken(
           roomName,
@@ -105,18 +124,12 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
           throw new Error('لم يرجع الخادم Meeting Token');
         }
 
-        console.log('[DAILY_SIMPLE] TOKEN_CREATED = true');
-
+        console.log('[DAILY] TOKEN_CREATED = true');
         setMeetingToken(token);
       } catch (err: any) {
         if (cancelled) return;
-
-        console.error('[DAILY_SIMPLE] TOKEN_ERROR', err);
-
-        setError(
-          err?.message ||
-            'فشل الحصول على تصريح دخول غرفة المكالمة'
-        );
+        console.error('[DAILY] TOKEN_ERROR', err);
+        setError(err?.message || 'فشل الحصول على تصريح دخول غرفة المكالمة');
       } finally {
         if (!cancelled) {
           setLoadingToken(false);
@@ -131,7 +144,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
     };
   }, [
     isConnected,
-    activeCall.roomUrl,
+    effectiveRoomUrl,
     activeCall.direction,
     roomName,
     currentUserId,
@@ -139,10 +152,97 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
   ]);
 
   /*
-   * عداد مدة المكالمة
+   * 2. تهيئة Daily Prebuilt والاستماع للأحداث الحية لعدد المشاركين
    */
   useEffect(() => {
-    if (!isConnected) {
+    const container = containerRef.current;
+    if (!isConnected || !meetingToken || !effectiveRoomUrl || !container) {
+      return;
+    }
+
+    let isMounted = true;
+
+    // إعداد مستمعي الأحداث الحية في dailyService
+    dailyService.onJoined = (summary: DailyRoomStateSummary) => {
+      if (!isMounted) return;
+      setIsRoomJoined(true);
+      setParticipantCount(summary.participantCount);
+      setBothUsersJoined(summary.hasBothJoined);
+      console.log('[DAILY_EVENT] onJoined -> PARTICIPANT_COUNT =', summary.participantCount);
+    };
+
+    dailyService.onParticipantCountChange = (
+      count: number,
+      hasBoth: boolean,
+      summary: DailyRoomStateSummary
+    ) => {
+      if (!isMounted) return;
+      setParticipantCount(count);
+      setBothUsersJoined(hasBoth);
+      console.log(
+        `[DAILY_EVENT] onParticipantCountChange -> PARTICIPANT_COUNT = ${count}, BOTH_JOINED = ${hasBoth}`
+      );
+    };
+
+    dailyService.onBothUsersJoined = (summary: DailyRoomStateSummary) => {
+      if (!isMounted) return;
+      setBothUsersJoined(true);
+      console.log('[DAILY_EVENT] onBothUsersJoined -> TWO_USERS_VERIFIED = true', summary);
+    };
+
+    dailyService.onLeft = () => {
+      if (!isMounted) return;
+      setIsRoomJoined(false);
+      setParticipantCount(0);
+      setBothUsersJoined(false);
+      onEndCall();
+    };
+
+    dailyService.onError = (errMsg: any) => {
+      if (!isMounted) return;
+      console.error('[DAILY_EVENT] onError ->', errMsg);
+      setError(typeof errMsg === 'string' ? errMsg : 'حدث خطأ في اتصال الغرفة');
+    };
+
+    // الانضمام الفعلي للغرفة
+    dailyService
+      .joinPrebuilt(
+        container,
+        effectiveRoomUrl,
+        currentUserName,
+        activeCall.callType,
+        meetingToken
+      )
+      .then(() => {
+        if (!isMounted) return;
+        const initialSummary = dailyService.getParticipantsSummary();
+        setParticipantCount(initialSummary.participantCount);
+        setBothUsersJoined(initialSummary.hasBothJoined);
+      })
+      .catch((joinErr: any) => {
+        if (!isMounted) return;
+        console.error('[DAILY_JOIN_ERR]', joinErr);
+        setError(joinErr?.message || 'تعذر الانضمام إلى غرفة المكالمة');
+      });
+
+    return () => {
+      isMounted = false;
+      dailyService.leave();
+    };
+  }, [
+    isConnected,
+    meetingToken,
+    effectiveRoomUrl,
+    activeCall.callType,
+    currentUserName,
+    onEndCall,
+  ]);
+
+  /*
+   * 3. عداد مدة المكالمة (يعمل بناءً على اتصال الغرفة وتأكيد المشاركين)
+   */
+  useEffect(() => {
+    if (!isConnected || !isRoomJoined) {
       setSeconds(0);
       return;
     }
@@ -154,50 +254,31 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
     return () => {
       window.clearInterval(timer);
     };
-  }, [isConnected]);
+  }, [isConnected, isRoomJoined]);
 
   const durationText = useMemo(() => {
     const min = Math.floor(seconds / 60);
     const sec = seconds % 60;
-
-    return `${String(min).padStart(2, '0')}:${String(sec).padStart(
-      2,
-      '0'
-    )}`;
+    return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
   }, [seconds]);
-
-  /*
-   * Daily Prebuilt يقبل Meeting Token داخل الرابط.
-   */
-  const dailyUrl = useMemo(() => {
-    if (!activeCall.roomUrl || !meetingToken) {
-      return '';
-    }
-
-    const separator = activeCall.roomUrl.includes('?') ? '&' : '?';
-
-    return `${activeCall.roomUrl}${separator}t=${encodeURIComponent(
-      meetingToken
-    )}`;
-  }, [activeCall.roomUrl, meetingToken]);
 
   const statusText = () => {
     switch (callState) {
       case 'calling':
         return 'جاري الاتصال...';
-
       case 'ringing':
         return 'جاري الرنين...';
-
       case 'incoming':
         return 'مكالمة واردة';
-
       case 'connected':
-        return durationText;
-
+        if (bothUsersJoined) {
+          return `${durationText} (متصل بالطرفين)`;
+        } else if (isRoomJoined) {
+          return 'في الغرفة • بانتظار انضمام الطرف الآخر...';
+        }
+        return 'جاري دخول الغرفة...';
       case 'ended':
         return 'انتهت المكالمة';
-
       default:
         return 'جاري التهيئة...';
     }
@@ -241,9 +322,11 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
 
               <span
                 className={
-                  isConnected
+                  bothUsersJoined
                     ? 'text-emerald-400 font-bold'
-                    : 'text-amber-300'
+                    : isConnected
+                    ? 'text-amber-300 font-medium'
+                    : 'text-slate-400'
                 }
               >
                 {statusText()}
@@ -253,6 +336,28 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Real-time Participant Count Badge */}
+          {isRoomJoined && (
+            <div
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-colors ${
+                bothUsersJoined
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                  : 'bg-amber-500/10 text-amber-300 border-amber-500/20 animate-pulse'
+              }`}
+            >
+              {bothUsersJoined ? (
+                <UserCheck className="w-3.5 h-3.5" />
+              ) : (
+                <Users className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {bothUsersJoined
+                  ? `طرفان متصلان (${participantCount})`
+                  : `مشارك (${participantCount})`}
+              </span>
+            </div>
+          )}
+
           <div className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 text-[11px] font-bold">
             <ShieldCheck className="w-4 h-4" />
             Daily
@@ -296,11 +401,11 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
             <Loader2 className="w-9 h-9 animate-spin text-emerald-400 mb-4" />
 
             <h3 className="font-bold">
-              جاري تجهيز المكالمة...
+              جاري تجهيز وتأمين المكالمة...
             </h3>
 
             <p className="text-xs text-slate-400 mt-2">
-              يتم تأمين الدخول إلى الغرفة
+              يتم إصدار تصريح الدخول ومطابقة هوية الغرفة
             </p>
           </div>
         )}
@@ -331,23 +436,23 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({
           </div>
         )}
 
-        {isConnected && dailyUrl && !error && (
-          <iframe
-            key={dailyUrl}
-            src={dailyUrl}
-            title="SNNS Daily Call"
-            allow="camera; microphone; fullscreen; display-capture; autoplay"
-            allowFullScreen
-            className="absolute inset-0 w-full h-full border-0 bg-[#07111f]"
-            onLoad={() => {
-              console.log('[DAILY_SIMPLE] IFRAME_LOADED = true');
-              console.log(
-                '[DAILY_SIMPLE] ROOM_NAME =',
-                roomName
-              );
-            }}
-          />
+        {/* Real-time waiting banner when local user is alone in the Daily room */}
+        {isConnected && isRoomJoined && !bothUsersJoined && !error && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-slate-900/90 backdrop-blur border border-amber-500/30 text-amber-200 text-xs px-4 py-2 rounded-2xl shadow-lg flex items-center gap-2 pointer-events-none animate-pulse">
+            <Users className="w-4 h-4 text-amber-400" />
+            <span>
+              أنت متصل في الغرفة • بانتظار انضمام {activeCall.peerName}... (المشاركون: {participantCount})
+            </span>
+          </div>
         )}
+
+        {/* Container for Daily Prebuilt call with full real-time event listeners */}
+        <div
+          ref={containerRef}
+          className={`absolute inset-0 w-full h-full bg-[#07111f] ${
+            isConnected && !error ? 'block' : 'hidden'
+          }`}
+        />
       </main>
     </div>
   );
