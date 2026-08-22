@@ -49,6 +49,8 @@ import {
 } from '../lib/firestoreService';
 import { getMediaStream } from '../utils/webrtc';
 import { ChatView } from './ChatView';
+import { NearbyRadarView } from './NearbyRadarView';
+import { Radar } from 'lucide-react';
 
 interface MainScreenProps {
   currentUser: User;
@@ -66,7 +68,7 @@ export const MainScreen: React.FC<MainScreenProps> = ({
   isWsConnected,
 }) => {
   const [userProfile, setUserProfile] = useState<User>(currentUser);
-  const [activeTab, setActiveTab] = useState<'contacts' | 'chats' | 'history' | 'test' | 'admin'>('contacts');
+  const [activeTab, setActiveTab] = useState<'contacts' | 'nearby' | 'chats' | 'history' | 'test' | 'admin'>('contacts');
   const [chatTargetUser, setChatTargetUser] = useState<User | null>(null);
   const [dialNumber, setDialNumber] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -338,8 +340,13 @@ export const MainScreen: React.FC<MainScreenProps> = ({
     }
   };
 
-  // Filter users
+  // Non-admin users cannot see admin in directory for stealth
   const isTargetAdmin = (u: User) => u.phone === '1007363904' || u.role === 'admin';
+
+  // Count of users who are visible and NOT in Ghost mode (!isStealth)
+  const nearbyVisibleCount = allUsers.filter(
+    (u) => u.uid !== currentUser.uid && !u.isStealth && (isAdmin || !isTargetAdmin(u))
+  ).length;
 
   const visibleUsers = allUsers.filter((u) => {
     // Current user doesn't call themselves
@@ -469,6 +476,23 @@ export const MainScreen: React.FC<MainScreenProps> = ({
 
             <button
               type="button"
+              id="tab-nearby-btn"
+              onClick={() => setActiveTab('nearby')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                activeTab === 'nearby'
+                  ? 'bg-[#128C7E] text-white shadow-md shadow-teal-900/10'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+              }`}
+            >
+              <Radar className="w-4 h-4 text-[#25D366]" />
+              <span>الأجهزة القريبة (الرادار)</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${activeTab === 'nearby' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
+                {nearbyVisibleCount} متاح
+              </span>
+            </button>
+
+            <button
+              type="button"
               id="tab-chats-btn"
               onClick={() => setActiveTab('chats')}
               className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
@@ -556,6 +580,43 @@ export const MainScreen: React.FC<MainScreenProps> = ({
         {/* Tab 1: Contacts Directory + Quick Dial Pad */}
     {activeTab === 'contacts' && (
   <div className="max-w-6xl mx-auto space-y-5">
+
+    {/* Quick Nearby Discovery Banner */}
+    <div
+      onClick={() => setActiveTab('nearby')}
+      className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 rounded-3xl p-5 text-white shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 cursor-pointer hover:shadow-emerald-900/20 hover:scale-[1.005] transition duration-200 border border-emerald-500/30 group"
+    >
+      <div className="flex items-center gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition shrink-0">
+          <Radar className="w-6 h-6 animate-pulse text-[#25D366]" />
+        </div>
+        <div>
+          <div className="flex items-center gap-2">
+            <h4 className="text-sm sm:text-base font-black text-white">
+              رادار الأجهزة القريبة (البحث عن الأجهزة غير المفعلين لوضع الشبح)
+            </h4>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#25D366] text-black font-black">
+              {nearbyVisibleCount} متاح
+            </span>
+          </div>
+          <p className="text-xs text-emerald-200/80 mt-1 leading-relaxed">
+            استكشف المستخدمين والأجهزة المتواجدة في نطاقك الجغرافي والشبكي والذين قاموا بتعطيل وضع التخفي لإجراء اتصالات فيديو وصوتية فورية.
+          </p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setActiveTab('nearby');
+        }}
+        className="shrink-0 px-4 py-2.5 bg-[#25D366] hover:bg-[#1fbd5c] text-slate-950 font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center gap-1.5"
+      >
+        <Radar className="w-4 h-4" />
+        <span>فتح الرادار المباشر</span>
+      </button>
+    </div>
 
     {/* Search */}
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-4 flex items-center gap-3">
@@ -767,7 +828,27 @@ export const MainScreen: React.FC<MainScreenProps> = ({
 
   </div>
 )}
-        {/* Tab 2: Direct Messages (المحادثات النصية الحقيقية) */}
+
+        {/* Tab 2: Nearby Devices Discovery (البحث عن الأجهزة القريبة غير المفعلين لوضع الشبح) */}
+        {activeTab === 'nearby' && (
+          <div className="animate-in fade-in duration-200">
+            <NearbyRadarView
+              currentUser={userProfile}
+              allUsers={allUsers}
+              onlineUids={onlineUids}
+              onStartCall={handleInitiateCall}
+              onOpenChat={(targetUser) => {
+                setChatTargetUser(targetUser);
+                setActiveTab('chats');
+              }}
+              onUserUpdate={(updated) => {
+                setUserProfile((prev) => ({ ...prev, ...updated }));
+              }}
+            />
+          </div>
+        )}
+
+        {/* Tab 3: Direct Messages (المحادثات النصية الحقيقية) */}
         {activeTab === 'chats' && (
           <div className="animate-in fade-in duration-200">
             <ChatView

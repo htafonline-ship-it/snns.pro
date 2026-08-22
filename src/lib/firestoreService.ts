@@ -44,6 +44,10 @@ export async function saveUserProfile(uid: string, data: Partial<User>): Promise
     is_call_locked: Boolean(data.isCallLocked),
     status: data.status || 'online',
     last_seen: Date.now(),
+    latitude: data.latitude !== undefined ? data.latitude : null,
+    longitude: data.longitude !== undefined ? data.longitude : null,
+    last_location_update: data.lastLocationUpdate || (data.latitude ? Date.now() : null),
+    device_type: data.deviceType || 'mobile',
   };
 
   if (!existingSnap.exists()) {
@@ -51,6 +55,44 @@ export async function saveUserProfile(uid: string, data: Partial<User>): Promise
   }
 
   await setDoc(userRef, payload, { merge: true });
+}
+
+/**
+ * Update user location in Firestore
+ */
+export async function updateUserLocation(
+  uid: string,
+  latitude: number,
+  longitude: number
+): Promise<void> {
+  if (!uid) return;
+  try {
+    const userRef = doc(db, USERS_COLLECTION, uid);
+    await updateDoc(userRef, {
+      latitude,
+      longitude,
+      last_location_update: Date.now(),
+      last_seen: Date.now(),
+    });
+  } catch (err) {
+    console.error('Failed to update user location:', err);
+  }
+}
+
+/**
+ * Toggle stealth (Ghost) mode in Firestore
+ */
+export async function toggleStealthMode(uid: string, isStealth: boolean): Promise<void> {
+  if (!uid) return;
+  try {
+    const userRef = doc(db, USERS_COLLECTION, uid);
+    await updateDoc(userRef, {
+      is_stealth: isStealth,
+      last_seen: Date.now(),
+    });
+  } catch (err) {
+    console.error('Failed to toggle stealth mode in Firestore:', err);
+  }
 }
 
 /**
@@ -158,11 +200,15 @@ export function subscribeAllUsers(currentUid: string, callback: (users: User[]) 
           photo_url: d.photo_url || '',
           avatarColor: d.avatar_color || 'bg-emerald-600',
           role: d.role || 'user',
-          isStealth: Boolean(d.is_stealth),
-          isCallLocked: Boolean(d.is_call_locked),
+          isStealth: Boolean(d.is_stealth ?? d.isStealth),
+          isCallLocked: Boolean(d.is_call_locked ?? d.isCallLocked),
           status: d.status || 'offline',
           lastSeen: d.last_seen || Date.now(),
           createdAt: d.created_at || Date.now(),
+          latitude: typeof d.latitude === 'number' ? d.latitude : undefined,
+          longitude: typeof d.longitude === 'number' ? d.longitude : undefined,
+          lastLocationUpdate: d.last_location_update || undefined,
+          deviceType: d.device_type || 'mobile',
         });
       });
       callback(list);

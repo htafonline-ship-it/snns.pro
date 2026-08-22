@@ -3,7 +3,8 @@
   "description": "تطبيق محادثات واتصال صوتي ومرئي فائق الأمان عبر Daily.co وFirebase",
   "requestFramePermissions": [
     "camera",
-    "microphone"
+    "microphone",
+    "geolocation"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

@@ -7,13 +7,17 @@ export interface User {
   photo_url?: string;
   avatarColor: string;
   role?: 'admin' | 'user';
-  isStealth?: boolean;
+  isStealth?: boolean; // وضع الشبح (Ghost Mode): true = مخفي، false = غير مفعّل ومرئي للأجهزة القريبة
   isCallLocked?: boolean;
   isOnline?: boolean;
   lastSeen?: number;
   status?: 'online' | 'offline' | 'in_call';
   createdAt?: number;
   blocked_uids?: string[];
+  latitude?: number;
+  longitude?: number;
+  lastLocationUpdate?: number;
+  deviceType?: 'mobile' | 'tablet' | 'desktop';
 }
 
 export interface Contact {
